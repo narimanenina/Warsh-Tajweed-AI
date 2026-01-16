@@ -2,134 +2,89 @@ import streamlit as st
 import pandas as pd
 import speech_recognition as sr
 import io
-import difflib
-import os
 import librosa
 import numpy as np
 import re
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
+from fastdtw import fastdtw
+from scipy.spatial.distance import euclidean
 
-# --- 1. إعدادات الواجهة الاحترافية ---
-st.set_page_config(page_title="مقرأة ورش الشاملة", layout="centered", page_icon="🕌")
+# --- 1. إعدادات الصفحة ---
+st.set_page_config(page_title="مدرسة بلال العيناوي الذكية", layout="centered", page_icon="🕌")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Amiri&display=swap');
-    html, body, [class*="st-"] { 
-        font-family: 'Amiri', serif; direction: rtl; text-align: right; 
-    }
-    .st-emotion-cache-p4m61c { flex-direction: row-reverse !important; }
-    .quran-container {
-        background-color: #fcfdfc; padding: 25px; border-radius: 15px;
-        border-right: 10px solid #2E7D32; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-    }
-    .stButton>button { 
-        background-color: #2E7D32; color: white; border-radius: 10px; 
-        width: 100%; height: 3.5em; font-size: 18px;
-    }
+    html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: right; }
+    .quran-box { background-color: #f0f4f0; padding: 25px; border-radius: 15px; border-right: 10px solid #2E7D32; }
+    .highlight { color: #2E7D32; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. محرك البحث عن الأحكام (خلف الكواليس) ---
-@st.cache_data
-def load_warsh_data():
-    if os.path.exists('arabic_phonetics.csv'):
-        return pd.read_csv('arabic_phonetics.csv', encoding='utf-8-sig')
-    return None
-
-df_rules = load_warsh_data()
-
-def get_tajweed_feedback(word):
-    """تحليل الكلمة وربطها بالأحكام والمخارج بناءً على ملف CSV"""
-    feedback = []
-    if df_rules is not None:
-        clean_word = re.sub(r"[\u064B-\u0652]", "", word)
-        for char in clean_word:
-            match = df_rules[df_rules['letter'] == char]
-            if not match.empty:
-                row = match.iloc[0]
-                feedback.append({
-                    'الحرف': row['letter'],
-                    'الحكم': row['rule_category'],
-                    'المخرج': row['place'],
-                    'الصفة': row['emphasis']
-                })
-    return feedback
-
-# --- 3. وظيفة معالجة وتحويل الصوت ---
-def process_audio_v14(audio_bytes):
-    # استخدام pydub لضمان تحويل أي تنسيق إلى WAV PCM صالح للتحليل
-    audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
-    wav_buf = io.BytesIO()
-    audio.export(wav_buf, format="wav")
-    wav_buf.seek(0)
+# --- 2. دالة المقارنة السمعية (المحاكاة) ---
+def compare_to_teacher(teacher_bytes, student_bytes):
+    # تحويل البصمة الصوتية للشيخ والتلميذ
+    y_t, sr_t = librosa.load(io.BytesIO(teacher_bytes), sr=22050)
+    y_s, sr_s = librosa.load(io.BytesIO(student_bytes), sr=22050)
     
-    # تحليل زمن الصوت (للمد المشبع 6 حركات)
-    y, sr_rate = librosa.load(wav_buf)
-    rms = librosa.feature.rms(y=y)[0]
-    threshold = np.max(rms) * 0.25
-    mad_duration = np.sum(rms > threshold) * (512 / sr_rate)
+    # استخراج رنين الحروف
+    mfcc_t = librosa.feature.mfcc(y=y_t, sr=sr_t)
+    mfcc_s = librosa.feature.mfcc(y=y_s, sr=sr_s)
     
-    wav_buf.seek(0)
-    return round(mad_duration, 2), wav_buf
+    # حساب المسافة بين الأداءين
+    distance, _ = fastdtw(mfcc_t.T, mfcc_s.T, dist=euclidean)
+    similarity = 100 / (1 + (distance / 45000)) # نسبة تقريبية للمحاكاة
+    return round(similarity, 1)
 
-# --- 4. واجهة المستخدم ---
-st.markdown("<h1 style='text-align: center; color: #1B5E20;'>🕌 مصحح تلاوة ورش الشامل</h1>", unsafe_allow_html=True)
-st.write("<p style='text-align: center;'>تصحيح المخارج، القلقلة، الغنة، وأحكام المد</p>", unsafe_allow_html=True)
-
-
+# --- 3. واجهة المستخدم ---
+st.title("🕌 مدرسة القارئ بلال العيناوي")
+st.write("تدرّب على محاكاة أداء القارئ بلال العيناوي والحصول على تقييم فوري.")
 
 with st.sidebar:
-    st.header("⚙️ الضبط")
-    target_text = st.text_area("الآية المستهدفة:", "إنا أعطيناك الكوثر")
-    st.info("💡 يتم استخدام ملف CSV كمرجع للأحكام في الخلفية.")
-
-audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة بالترتيل", stop_prompt="⏹️ توقف واطلب التصحيح", key='warsh_v14')
-
-if audio_record:
-    audio_bytes = audio_record['bytes']
+    st.header("🎵 اختيار الآية المرجعية")
+    # هنا يمكنك وضع روابط لملفات صوتية حقيقية لبلال العيناوي أو رفعها يدوياً
+    sample_options = {
+        "سورة الفاتحة - بلال العيناوي": "fatiah_bilal.wav",
+        "سورة الكوثر - بلال العيناوي": "kawthar_bilal.wav"
+    }
+    choice = st.selectbox("اختر التسجيل المرجعي:", list(sample_options.keys()))
     
-    with st.spinner("⏳ جاري تحليل الأحكام والمخارج..."):
-        try:
-            # 1. المعالجة والتحويل
-            mad_time, wav_buffer = process_audio_v14(audio_bytes)
-            
-            # 2. التعرف على النص عبر جوجل
-            r = sr.Recognizer()
-            with sr.AudioFile(wav_buffer) as source:
-                r.adjust_for_ambient_noise(source)
-                audio_recorded = r.record(source)
-                spoken_text = r.recognize_google(audio_recorded, language="ar-SA")
-            
-            # 3. المقارنة اللفظية الذكية
-            norm_target = re.sub(r"[إأآا]", "ا", target_text)
-            norm_spoken = re.sub(r"[إأآا]", "ا", spoken_text)
-            accuracy = round(difflib.SequenceMatcher(None, norm_target.split(), norm_spoken.split()).ratio() * 100, 1)
+    # خيار رفع ملف الشيخ يدوياً
+    uploaded_teacher = st.file_uploader("أو ارفع ملف القارئ بلال العيناوي (WAV/MP3):")
 
-            # --- عرض التقرير النهائي ---
-            st.markdown("<div class='quran-container'>", unsafe_allow_html=True)
-            st.subheader(f"نسبة الإتقان: {accuracy}%")
-            st.write(f"**المنطوق:** {spoken_text}")
+# التحقق من وجود ملف الشيخ
+teacher_data = None
+if uploaded_teacher:
+    teacher_data = uploaded_teacher.read()
+    st.audio(teacher_data)
+else:
+    st.info("قم برفع ملف القارئ بلال العيناوي لتبدأ المقارنة السمعية.")
+
+# تسجيل التلميذ
+st.subheader("🎤 سجل تلاوتك الآن محاكياً الشيخ:")
+student_rec = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="إيقاف وطلب النتيجة", key='bilal_mimic')
+
+if student_rec and teacher_data:
+    student_bytes = student_rec['bytes']
+    
+    with st.spinner("⏳ جاري تحليل مخارج الحروف ومطابقتها بصوت بلال العيناوي..."):
+        try:
+            # المقارنة السمعية
+            sim_score = compare_to_teacher(teacher_data, student_bytes)
             
-            st.divider()
-            st.markdown("### 📋 التحليل التفصيلي لجميع الأحكام:")
+            st.markdown("<div class='quran-box'>", unsafe_allow_html=True)
+            st.markdown(f"<h2 style='text-align:center;'>نسبة محاكاة الشيخ بلال: <span class='highlight'>{sim_score}%</span></h2>", unsafe_allow_html=True)
             
-            words = target_text.split()
-            for word in words:
-                tajweed_data = get_tajweed_feedback(word)
-                if tajweed_data:
-                    # expander مع منع تداخل الكتابة مع الأيقونة
-                    with st.expander(f"📖 أحكام ومخارج كلمة: {word}"):
-                        st.dataframe(pd.DataFrame(tajweed_data), use_container_width=True, hide_index=True)
-            
-            # تقييم زمن المد لورش
-            if mad_time < 3.0:
-                st.warning(f"⚠️ تنبيه تجويدي: زمن المد ({mad_time} ث) قصير. تذكر إشباع المد لـ 6 حركات.")
+            # نصائح بناءً على الأداء
+            if sim_score > 85:
+                st.success("أحسنت! أداءك قريب جداً من نبرة ومخارج الشيخ بلال العيناوي.")
+            elif sim_score > 60:
+                st.warning("أداء جيد، حاول التركيز على أزمنة المدود وتفخيم اللامات كما يفعل الشيخ.")
             else:
-                st.success(f"✅ إتقان ممتاز! زمن المد ({mad_time} ث) يتوافق مع رواية ورش.")
+                st.error("هناك اختلاف في رنين الحروف، استمع للشيخ جيداً وحاول التقليد مرة أخرى.")
             
             st.markdown("</div>", unsafe_allow_html=True)
-
+            
         except Exception as e:
-            st.error(f"⚠️ تعذر التحليل: يرجى القراءة بوضوح أو التأكد من إعدادات الميكروفون. (السبب: {e})")
+            st.error(f"حدث خطأ أثناء المقارنة: {e}")
