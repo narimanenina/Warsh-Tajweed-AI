@@ -7,107 +7,97 @@ import librosa
 import numpy as np
 import soundfile as sf
 from streamlit_mic_recorder import mic_recorder
+from pydub import AudioSegment
 
-# --- 1. الإعدادات البصرية ---
-st.set_page_config(page_title="مصحح ورش - طريق الأزرق", layout="centered")
+# --- 1. إعدادات الواجهة ---
+st.set_page_config(page_title="مصحح تلاوة ورش - نسخة مستقرة", layout="centered")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Amiri&display=swap');
     html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: right; }
-    .main-box { background-color: #f4f9f4; padding: 20px; border-radius: 15px; border-right: 10px solid #1B5E20; }
-    .metric-card { background-color: white; padding: 10px; border-radius: 10px; border: 1px solid #c8e6c9; text-align: center; }
+    .main-box { background-color: #f4f9f4; padding: 25px; border-radius: 15px; border-right: 10px solid #1B5E20; }
+    .metric-card { background-color: white; padding: 15px; border-radius: 10px; border: 1px solid #c8e6c9; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. دالة تحليل المد المشبع (6 حركات) ---
-def get_max_mad_duration(audio_bytes):
-    try:
-        # قراءة الصوت باستخدام soundfile مباشرة من البايتات
-        audio_stream = io.BytesIO(audio_bytes)
-        data, samplerate = sf.read(audio_stream)
-        
-        # إذا كان الصوت ستيريو، نحوله لمونو
-        if len(data.shape) > 1:
-            data = np.mean(data, axis=1)
-        
-        # حساب الطاقة الصوتية
-        rms = librosa.feature.rms(y=data)[0]
-        threshold = np.max(rms) * 0.3
-        
-        # حساب أطول فترة استمرار صوتي فوق العتبة
-        frames = librosa.frames_to_time(np.arange(len(rms)), sr=samplerate)
-        is_speech = rms > threshold
-        
-        max_duration = 0
-        current_duration = 0
-        frame_time = frames[1] - frames[0] if len(frames) > 1 else 0.02
-        
-        for speech in is_speech:
-            if speech:
-                current_duration += frame_time
-            else:
-                max_duration = max(max_duration, current_duration)
-                current_duration = 0
-        return round(max(max_duration, current_duration), 2)
-    except Exception as e:
-        return 0
+# --- 2. دالة تحويل الصوت ومعالجة الصيغ ---
+def process_audio_data(audio_bytes):
+    """تحويل البايتات المسجلة من المتصفح إلى صيغة WAV PCM صالحة"""
+    audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
+    # تحويل لـ Mono وتردد 16000Hz لضمان أفضل دقة مع جوجل وليبروسا
+    audio_segment = audio_segment.set_channels(1).set_frame_rate(16000)
+    
+    buf = io.BytesIO()
+    audio_segment.export(buf, format="wav")
+    buf.seek(0)
+    return buf
 
-# --- 3. واجهة التطبيق ---
-st.markdown("<h1 style='text-align: center; color: #1B5E20;'>🕌 مصحح تلاوة ورش</h1>", unsafe_allow_html=True)
+# --- 3. دالة تحليل مد ورش (طريق الأزرق) ---
+def analyze_warsh_duration(wav_buf):
+    y, sr_rate = librosa.load(wav_buf)
+    rms = librosa.feature.rms(y=y)[0]
+    smoothed_rms = np.convolve(rms, np.ones(5)/5, mode='same')
+    is_speech = smoothed_rms > (np.max(smoothed_rms) * 0.25)
+    
+    durations = []
+    count = 0
+    for s in is_speech:
+        if s: count += 1
+        else:
+            if count > 0: durations.append(count * (512 / sr_rate))
+            count = 0
+    return round(max(durations), 2) if durations else 0
+
+# --- 4. واجهة التطبيق الرئيسية ---
+st.title("🕌 مصحح تلاوة ورش الذكي")
 
 with st.sidebar:
-    st.header("📖 خيارات التلاوة")
-    surah_dict = {
-        "سورة الكوثر": "إنا أعطيناك الكوثر",
-        "سورة الإخلاص": "قل هو الله أحد الله الصمد",
-        "سورة الفاتحة": "غير المغضوب عليهم ولا الضالين"
-    }
-    choice = st.selectbox("اختر السورة:", list(surah_dict.keys()))
-    target = surah_dict[choice]
-    st.info(f"الآية: {target}")
+    st.header("👤 بيانات القارئ")
+    surahs = {"سورة الكوثر": "إنا أعطيناك الكوثر", "سورة الفاتحة": "غير المغضوب عليهم ولا الضالين"}
+    choice = st.selectbox("اختر السورة:", list(surahs.keys()))
+    target_text = surahs[choice]
+    st.info(f"الآية المرجعية: {target_text}")
 
-# استخدام الميكروفون
-audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة", stop_prompt="⏹️ توقف", key='recorder')
+# تسجيل الصوت
+audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة", stop_prompt="⏹️ توقف واطلب النتيجة", key='final_rec')
 
 if audio_record:
     audio_bytes = audio_record['bytes']
-    st.audio(audio_bytes)
     
-    with st.spinner("جاري التحليل..."):
+    with st.spinner("⏳ جاري تحويل الصوت وتحليل التجويد..."):
         try:
-            # التحليل النصي
+            # معالجة الصيغة (حل مشكلة PCM WAV)
+            wav_buffer = process_audio_data(audio_bytes)
+            
+            # التعرف على النص
             r = sr.Recognizer()
-            with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+            with sr.AudioFile(wav_buffer) as source:
                 audio_data = r.record(source)
-                # استخدام لغة الاستهداف (العربية)
                 spoken_text = r.recognize_google(audio_data, language="ar-SA")
             
             # تحليل المد
-            mad_duration = get_max_mad_duration(audio_bytes)
+            wav_buffer.seek(0) # إعادة المؤشر للبداية
+            mad_time = analyze_warsh_duration(wav_buffer)
             
-            # حساب المطابقة
-            accuracy = round(difflib.SequenceMatcher(None, target.split(), spoken_text.split()).ratio() * 100, 1)
+            # حساب الدقة
+            acc = round(difflib.SequenceMatcher(None, target_text.split(), spoken_text.split()).ratio() * 100, 1)
             
             # عرض النتائج
             st.markdown("<div class='main-box'>", unsafe_allow_html=True)
             c1, c2 = st.columns(2)
-            c1.markdown(f"<div class='metric-card'><h4>دقة الألفاظ</h4><h2>{accuracy}%</h2></div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='metric-card'><h4>زمن أطول مد</h4><h2>{mad_duration} ثانية</h2></div>", unsafe_allow_html=True)
+            c1.markdown(f"<div class='metric-card'><h4>صحة اللفظ</h4><h2>{acc}%</h2></div>", unsafe_allow_html=True)
+            c2.markdown(f"<div class='metric-card'><h4>أطول مد</h4><h2>{mad_time} ث</h2></div>", unsafe_allow_html=True)
             
-            st.write(f"**النص المكتشف:** {spoken_text}")
+            st.write(f"**المنطوق:** {spoken_text}")
             
-            if accuracy > 80:
-                if mad_duration > 3.5:
-                    st.success("✅ تلاوة رائعة ومد مشبع صحيح برواية ورش!")
-                else:
-                    st.warning("⚠️ اللفظ صحيح، ولكن حاول إطالة المد ليكون 6 حركات (إشباع).")
+            if acc > 85 and mad_time >= 3.5:
+                st.success("ما شاء الله! تلاوة صحيحة مع مد مشبع (طريق الأزرق).")
+            elif acc > 85:
+                st.warning("اللفظ صحيح ولكن المد قصير (ورش يمد 6 حركات).")
             else:
-                st.error("❌ هناك اختلاف في الكلمات، حاول القراءة بهدوء وترتيل.")
+                st.error("يوجد خطأ في نطق الكلمات.")
             st.markdown("</div>", unsafe_allow_html=True)
 
-        except sr.UnknownValueError:
-            st.error("❌ لم يستطع النظام تمييز الكلمات. حاول القراءة بوضوح أكبر وبصوت مرتفع قليلاً.")
         except Exception as e:
-            st.error(f"⚠️ خطأ في معالجة الملف الصوتي: {e}")
-
+            st.error(f"⚠️ خطأ فني: تأكد من الكلام بوضوح (التفاصيل: {str(e)})")
