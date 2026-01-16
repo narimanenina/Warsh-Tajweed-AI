@@ -9,10 +9,9 @@ import numpy as np
 import re
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
-from datetime import datetime
 
-# --- 1. إعدادات الصفحة والجماليات ---
-st.set_page_config(page_title="مصحح ورش - طريق الأزرق", layout="centered")
+# --- 1. إعدادات الصفحة والهوية البصرية ---
+st.set_page_config(page_title="مصحح تلاوة ورش - طريق الأزرق", layout="centered")
 
 st.markdown("""
     <style>
@@ -28,59 +27,70 @@ st.markdown("""
         border: 1px solid #c8e6c9; text-align: center;
     }
     .stButton>button { background-color: #2E7D32; color: white; border-radius: 10px; width: 100%; }
+    h1 { color: #1B5E20; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. تحميل البيانات (بالأعمدة الجديدة) ---
+# --- 2. تحميل البيانات (بالأعمدة المحددة) ---
 @st.cache_data
 def load_phonetics():
     if os.path.exists('arabic_phonetics.csv'):
-        return pd.read_csv('arabic_phonetics.csv')
+        # قراءة الملف الذي يحتوي على (letter, name, place, rule_category, emphasis, ipa)
+        return pd.read_csv('arabic_phonetics.csv', encoding='utf-8-sig')
     return None
 
-df_phonetics = load_phonetics()
+df_rules = load_phonetics()
 
-# --- 3. وظائف معالجة النصوص والتحليل ---
+# --- 3. وظائف التحليل والذكاء الاصطناعي ---
 
 def normalize_text(text):
-    """تنظيف النص للمقارنة العادلة"""
+    """تنظيف النص للمقارنة العادلة (تجاهل الهمزات والتشكيل)"""
     text = re.sub(r"[إأآا]", "ا", text)
-    text = re.sub(r"[\u064B-\u0652]", "", text) # حذف التشكيل
+    text = re.sub(r"[\u064B-\u0652]", "", text) 
     return text.strip()
 
-def get_rule_feedback(word):
-    """البحث عن أحكام التجويد للحروف الموجودة في الكلمة المتعثرة"""
-    feedback = []
-    if df_phonetics is not None:
+def get_phonetic_info(word):
+    """استخراج بيانات الأحكام والمخارج لكل حرف في الكلمة من ملف CSV"""
+    info_list = []
+    if df_rules is not None:
         for char in word:
-            match = df_phonetics[df_phonetics['letter'] == char]
+            # البحث عن الحرف في عمود letter
+            match = df_rules[df_rules['letter'] == char]
             if not match.empty:
-                rule = match.iloc[0]['rule_category']
-                place = match.iloc[0]['place']
-                feedback.append(f"الحرف '{char}': حكمه ({rule}) ومخرجه ({place})")
-    return list(set(feedback)) # حذف التكرار
+                row = match.iloc[0]
+                info_list.append({
+                    'الحرف': row['letter'],
+                    'الاسم': row['name'],
+                    'المخرج': row['place'],
+                    'الحكم': row['rule_category'],
+                    'الصفة': row['emphasis']
+                })
+    return info_list
 
 # --- 4. واجهة المستخدم ---
-st.title("🕌 مصحح التلاوة (ورش)")
-st.subheader("تحليل الأداء بناءً على قواعد التجويد")
+st.title("🕌 مصحح تلاوة ورش")
+st.subheader("تحليل الأحكام والمخارج بناءً على قواعد البيانات")
+
+# عرض صور الأحكام والمخارج إذا كان هناك مرجع (اختياري)
+
 
 with st.sidebar:
     st.header("⚙️ الإعدادات")
-    user_name = st.text_input("اسم القارئ:", "طالب العلم")
     target_text = st.text_area("الآية المستهدفة:", "إنا أعطيناك الكوثر")
-    if df_phonetics is not None:
-        with st.expander("📊 قواعد البيانات المحملة"):
-            st.write(df_phonetics)
+    
+    if df_rules is not None:
+        with st.expander("📄 عرض بيانات الأحكام (CSV)"):
+            st.dataframe(df_rules)
 
-# تسجيل الصوت
-audio_data = mic_recorder(start_prompt="🔴 ابدأ التلاوة", stop_prompt="⏹️ توقف واطلب التحليل", key='recorder_v5')
+# تسجيل الصوت ومعالجته
+audio_data = mic_recorder(start_prompt="🔴 ابدأ التلاوة", stop_prompt="⏹️ توقف واطلب التحليل", key='warsh_v6')
 
 if audio_data:
     audio_bytes = audio_data['bytes']
     
-    with st.spinner("⏳ جاري تحليل التلاوة والأحكام..."):
+    with st.spinner("⏳ جاري تحليل التلاوة وربطها بالأحكام..."):
         try:
-            # تحويل الصوت ومعالجته
+            # تحويل الصوت لضمان الجودة
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
             buf = io.BytesIO()
             audio.export(buf, format="wav")
@@ -91,33 +101,34 @@ if audio_data:
                 audio_recorded = r.record(source)
                 spoken_text = r.recognize_google(audio_recorded, language="ar-SA")
             
-            # المقارنة
+            # المقارنة النصية
             norm_target = normalize_text(target_text)
             norm_spoken = normalize_text(spoken_text)
-            
             accuracy = round(difflib.SequenceMatcher(None, norm_target.split(), norm_spoken.split()).ratio() * 100, 1)
             
-            # عرض التقرير
+            # عرض النتائج
             st.markdown("<div class='quran-card'>", unsafe_allow_html=True)
-            st.markdown(f"<h2 style='text-align:center;'>دقة التلاوة: {accuracy}%</h2>", unsafe_allow_html=True)
+            st.markdown(f"<h2 style='text-align:center;'>نسبة الإتقان: {accuracy}%</h2>", unsafe_allow_html=True)
             st.write(f"**النص المكتشف:** {spoken_text}")
             
-            # استخراج الأخطاء وربطها بملف الـ CSV
-            diff = list(difflib.ndiff(norm_target.split(), norm_spoken.split()))
-            errors = [d[2:] for d in diff if d.startswith('- ')]
+            # تحليل الأحكام والمخارج للكلمات
+            st.divider()
+            st.subheader("📝 التحليل الصوتي (بناءً على ملف CSV):")
             
-            if errors:
-                st.warning("⚠️ تنبيهات تجويدية للكلمات المتعثرة:")
-                for err_word in errors:
-                    rules = get_rule_feedback(err_word)
-                    if rules:
-                        st.write(f"• الكلمة **'{err_word}'**: ")
-                        for r in rules: st.write(f"   - {r}")
-            else:
-                st.balloons()
-                st.success("أحسنت! تلاوة مطابقة للأحكام.")
+            words = target_text.split()
+            for word in words:
+                clean_word = re.sub(r"[\u064B-\u0652]", "", word)
+                phonetics = get_phonetic_info(clean_word)
+                
+                with st.expander(f"تحليل كلمة: {word}"):
+                    if phonetics:
+                        # عرض البيانات في جدول لكل كلمة
+                        temp_df = pd.DataFrame(phonetics)
+                        st.table(temp_df)
+                    else:
+                        st.write("بيانات الحروف غير متوفرة في الملف.")
             
             st.markdown("</div>", unsafe_allow_html=True)
 
         except Exception as e:
-            st.error(f"حدث خطأ في التعرف على الصوت: {e}")
+            st.error(f"⚠️ حدث خطأ: يرجى التأكد من وضوح الصوت. (التفاصيل: {e})")
