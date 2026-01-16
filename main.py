@@ -7,134 +7,130 @@ import os
 import librosa
 import numpy as np
 import re
-import soundfile as sf
 from streamlit_mic_recorder import mic_recorder
+from pydub import AudioSegment
 
-# --- 1. الإعدادات والواجهة ---
-st.set_page_config(page_title="مقرأة ورش الذكية", layout="centered")
+# --- 1. إعدادات الهوية البصرية ---
+st.set_page_config(page_title="مقرأة ورش الذكية", layout="centered", page_icon="🕌")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Amiri&display=swap');
     html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: right; }
-    .quran-container {
+    .quran-box {
         background-color: #fcfdfc; padding: 25px; border-radius: 15px;
         border-right: 10px solid #2E7D32; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
     }
-    .stButton>button { background-color: #2E7D32; color: white; border-radius: 10px; width: 100%; }
+    .tajweed-report { background-color: white; border: 1px solid #e0e0e0; border-radius: 12px; padding: 15px; }
+    .stButton>button { background-color: #2E7D32; color: white; border-radius: 10px; width: 100%; height: 3.5em; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. تحميل البيانات في الخلفية ---
+# --- 2. تحميل الأحكام في الخلفية ---
 @st.cache_data
-def load_phonetics_data():
+def load_warsh_rules():
     if os.path.exists('arabic_phonetics.csv'):
         return pd.read_csv('arabic_phonetics.csv', encoding='utf-8-sig')
     return None
 
-df_rules = load_phonetics_data()
+df_rules = load_warsh_rules()
 
-# --- 3. محرك تصحيح التجويد والمخارج ---
-def get_tajweed_feedback(word):
-    """يربط كل كلمة قرأتها ببيانات المخارج والأحكام من ملف CSV"""
-    feedback = []
+# --- 3. وظائف التحليل الذكي ---
+
+def get_phonetic_analysis(word):
+    """ربط حروف الكلمة بالمخارج والأحكام من ملف CSV"""
+    analysis = []
     if df_rules is not None:
-        # تنظيف الكلمة من التشكيل للبحث عن الحروف
         clean_word = re.sub(r"[\u064B-\u0652]", "", word)
         for char in clean_word:
             match = df_rules[df_rules['letter'] == char]
             if not match.empty:
                 row = match.iloc[0]
-                feedback.append({
+                analysis.append({
                     'الحرف': row['letter'],
-                    'الحكم': row['rule_category'],
                     'المخرج': row['place'],
+                    'الحكم': row['rule_category'],
                     'الصفة': row['emphasis']
                 })
-    return feedback
+    return analysis
 
-def analyze_audio_itqan(audio_bytes):
-    """تحليل الصوت تقنياً لقياس زمن المد المشبع (6 حركات لورش)"""
-    # تحويل البايتات إلى مصفوفة رقمية لتحليل الموجة
-    with io.BytesIO(audio_bytes) as audio_file:
-        y, sr_rate = librosa.load(audio_file)
-    
-    # حساب الطاقة الصوتية (RMS)
-    rms = librosa.feature.rms(y=y)[0]
-    threshold = np.max(rms) * 0.2  # عتبة لاكتشاف الصوت الصافي
-    
-    # حساب زمن المد المستمر
-    durations = []
-    count = 0
-    for s in (rms > threshold):
-        if s: count += 1
-        else:
-            if count > 0: durations.append(count * (512 / sr_rate))
-            count = 0
-    
-    max_mad = round(max(durations), 2) if durations else 0
-    return max_mad
+def analyze_audio_mad(audio_bytes):
+    """تحليل الإشارة الصوتية لاكتشاف المد المشبع (6 حركات)"""
+    try:
+        # تحويل الصوت لضمان الصيغة الصحيحة
+        audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+        wav_buf = io.BytesIO()
+        audio.export(wav_buf, format="wav")
+        wav_buf.seek(0)
+        
+        y, sr_rate = librosa.load(wav_buf)
+        rms = librosa.feature.rms(y=y)[0]
+        # حساب أطول فترة استمرار صوتي
+        threshold = np.max(rms) * 0.3
+        durations = np.sum(rms > threshold) * (512 / sr_rate)
+        return round(durations, 2), wav_buf
+    except Exception as e:
+        return 0, io.BytesIO(audio_bytes)
 
-# --- 4. واجهة التطبيق ---
-st.title("🕌 مصحح تلاوة ورش الشامل")
-st.write("يقوم النظام الآن بتصحيح المخارج والأحكام آلياً بناءً على تلاوتك.")
+# --- 4. واجهة المستخدم ---
+st.markdown("<h1 style='text-align: center; color: #1B5E20;'>🕌 مصحح تلاوة ورش (طريق الأزرق)</h1>", unsafe_allow_html=True)
+st.write("<p style='text-align: center;'>نظام تعليمي ذكي لتصحيح الأحكام والمخارج</p>", unsafe_allow_html=True)
 
 
 
 with st.sidebar:
     st.header("⚙️ الضبط")
-    target_text = st.text_area("الآية المراد تصحيحها:", "إنا أعطيناك الكوثر")
-    st.info("💡 سيتم تحليل كل حرف تنطقه بناءً على قاعدة بيانات الأحكام.")
+    target_text = st.text_area("الآية المرجعية:", "إنا أعطيناك الكوثر")
+    st.info("💡 يتم استخدام ملف CSV كخبير تجويد في الخلفية لتحليل مخارج حروفك.")
 
 # تسجيل الصوت
-audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة بالترتيل", stop_prompt="⏹️ توقف واطلب التصحيح", key='warsh_final')
+audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة", stop_prompt="⏹️ توقف واطلب التقرير", key='warsh_final_itqan')
 
 if audio_record:
     audio_bytes = audio_record['bytes']
-    st.audio(audio_bytes)
     
     with st.spinner("⏳ جاري تحليل الأحكام والمخارج..."):
+        # التحليل الصوتي (المد)
+        mad_time, wav_buffer = analyze_audio_mad(audio_bytes)
+        
         try:
-            # 1. التعرف على النص (نستخدم محرك جوجل مع معالجة الأخطاء)
+            # التعرف على النص
             r = sr.Recognizer()
-            with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
-                # تعديل الحساسية للضجيج لضمان التحليل
-                r.adjust_for_ambient_noise(source, duration=0.5)
+            with sr.AudioFile(wav_buffer) as source:
+                r.adjust_for_ambient_noise(source)
                 audio_recorded = r.record(source)
                 spoken_text = r.recognize_google(audio_recorded, language="ar-SA")
             
-            # 2. تحليل زمن المد (طريق الأزرق)
-            mad_time = analyze_audio_itqan(audio_bytes)
-            
-            # 3. حساب دقة الألفاظ (تجاهل الهمزات في المقارنة)
+            # المطابقة النصية
             norm_target = re.sub(r"[إأآا]", "ا", target_text)
             norm_spoken = re.sub(r"[إأآا]", "ا", spoken_text)
             accuracy = round(difflib.SequenceMatcher(None, norm_target.split(), norm_spoken.split()).ratio() * 100, 1)
 
-            # --- عرض التقرير التفصيلي ---
-            st.markdown("<div class='quran-container'>", unsafe_allow_html=True)
-            st.subheader(f"النتيجة: {accuracy}%")
-            st.write(f"**الكلمات التي التقطها النظام:** {spoken_text}")
+            # عرض التقرير
+            st.markdown("<div class='quran-box'>", unsafe_allow_html=True)
+            st.metric("نسبة صحة مخارج الحروف", f"{accuracy}%")
+            st.write(f"**النص المكتشف:** {spoken_text}")
             
-            # التحليل التجويدي لكل كلمة بناءً على ملف CSV
+            # تصحيح الأحكام (بناءً على CSV)
             st.divider()
-            st.markdown("### 📋 تصحيح الأحكام والمخارج (بناءً على ملفك):")
+            st.subheader("📋 تصحيح الأحكام والمخارج:")
             words = target_text.split()
             for word in words:
-                tajweed_info = get_tajweed_feedback(word)
+                tajweed_info = get_phonetic_analysis(word)
                 if tajweed_info:
-                    with st.expander(f"أحكام ومخارج كلمة: {word}"):
+                    with st.expander(f"توجيهات تجويدية لكلمة: {word}"):
                         st.table(pd.DataFrame(tajweed_info))
             
             # تقييم المد لورش
             if mad_time < 3.0:
-                st.warning(f"⚠️ زمن المد المكتشف ({mad_time} ث) قصير. في رواية ورش (طريق الأزرق) يجب إشباع المد المتصل والمنفصل لـ 6 حركات.")
+                st.warning(f"⚠️ زمن المد المكتشف ({mad_time} ث) قصير. تذكر إشباع المد لـ 6 حركات.")
             else:
-                st.success(f"✅ إتقان ممتاز! زمن المد ({mad_time} ث) يتوافق مع إشباع ورش.")
+                st.success(f"✅ إتقان ممتاز! زمن المد ({mad_time} ث) يتوافق مع رواية ورش.")
             
             st.markdown("</div>", unsafe_allow_html=True)
 
         except sr.UnknownValueError:
-            st.error("لم يستطع النظام تمييز الكلمات. يرجى الترتيل بوضوح أكبر وبصوت مرتفع قليلاً.")
+            st.error("لم يستطع النظام تمييز الكلمات. يرجى الترتيل بصوت واضح ومرتفع قليلاً.")
         except Exception as e:
-            st.error("حدث خطأ تقني في معالجة الصوت. تأكد من أن الميكروفون يعمل وحاول مجدداً.")
+            st.error(f"خطأ تقني: تأكد من تحديث مكتبة pydub ووجود ffmpeg. (التفاصيل: {e})")
