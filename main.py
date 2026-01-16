@@ -6,9 +6,9 @@ import difflib
 import os
 import librosa
 import numpy as np
-import soundfile as sf
 import re
 from streamlit_mic_recorder import mic_recorder
+from pydub import AudioSegment
 
 # --- 1. إعدادات الصفحة والجماليات ---
 st.set_page_config(page_title="مقرأة ورش الذكية", layout="centered", page_icon="🕌")
@@ -26,7 +26,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. تحميل الأحكام في الخلفية ---
+# --- 2. تحميل البيانات في الخلفية ---
 @st.cache_data
 def load_warsh_data():
     if os.path.exists('arabic_phonetics.csv'):
@@ -38,7 +38,7 @@ df_rules = load_warsh_data()
 # --- 3. وظائف التحليل والتصحيح ---
 
 def get_tajweed_feedback(word):
-    """ربط الكلمة ببيانات الحروف من ملف CSV المخفي"""
+    """يربط الكلمة ببيانات الحروف من ملف CSV المخفي"""
     feedback = []
     if df_rules is not None:
         clean_word = re.sub(r"[\u064B-\u0652]", "", word)
@@ -52,27 +52,22 @@ def get_tajweed_feedback(word):
                 })
     return feedback
 
-def process_and_analyze(audio_bytes):
-    """معالجة الصوت الخام وحساب زمن المد (6 حركات لورش)"""
-    # قراءة الصوت مباشرة من البايتات لتجنب أخطاء التنسيق
-    audio_stream = io.BytesIO(audio_bytes)
-    data, samplerate = sf.read(audio_stream)
+def process_audio(audio_bytes):
+    """تحويل الصوت من أي صيغة إلى WAV PCM وتحليله"""
+    # تحويل البايتات إلى ملف صوتي باستخدام pydub (يحل مشكلة التنسيق)
+    audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+    wav_buf = io.BytesIO()
+    audio.export(wav_buf, format="wav")
+    wav_buf.seek(0)
     
-    # تحويل لـ Mono إذا كان Stereo
-    if len(data.shape) > 1:
-        data = np.mean(data, axis=1)
-    
-    # حساب الطاقة الصوتية للكشف عن المد
-    rms = librosa.feature.rms(y=data)[0]
+    # تحميل البيانات لتحليل المد عبر librosa
+    y, sr_rate = librosa.load(wav_buf)
+    rms = librosa.feature.rms(y=y)[0]
     threshold = np.max(rms) * 0.25
-    mad_duration = np.sum(rms > threshold) * (512 / samplerate)
+    mad_duration = np.sum(rms > threshold) * (512 / sr_rate)
     
-    # تحويل البيانات إلى صيغة WAV PCM في الذاكرة للتعرف على الكلام
-    buf = io.BytesIO()
-    sf.write(buf, data, samplerate, format='WAV', subtype='PCM_16')
-    buf.seek(0)
-    
-    return round(mad_duration, 2), buf
+    wav_buf.seek(0)
+    return round(mad_duration, 2), wav_buf
 
 # --- 4. واجهة المستخدم ---
 st.markdown("<h1 style='text-align: center; color: #1B5E20;'>🕌 مقرأة ورش الإلكترونية</h1>", unsafe_allow_html=True)
@@ -80,32 +75,32 @@ st.markdown("<h1 style='text-align: center; color: #1B5E20;'>🕌 مقرأة و�
 with st.sidebar:
     st.header("⚙️ الضبط")
     target_text = st.text_area("الآية المراد تصحيحها:", "إنا أعطيناك الكوثر")
-    st.info("💡 يتم استخدام ملف CSV كمرجع للأحكام في الخلفية.")
+    st.info("💡 يتم استخدام ملف CSV كخبير تجويد في الخلفية.")
 
-audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة", stop_prompt="⏹️ توقف واطلب التصحيح", key='warsh_v10')
+audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة بالترتيل", stop_prompt="⏹️ توقف واطلب التصحيح", key='warsh_v11')
 
 if audio_record:
     audio_bytes = audio_record['bytes']
     
-    with st.spinner("⏳ جاري تحليل الأحكام والمخارج..."):
+    with st.spinner("⏳ جاري معالجة الصوت وتحليل الأحكام..."):
         try:
-            # معالجة الصوت والحصول على زمن المد ومشغل الصوت المتوافق
-            mad_time, wav_buffer = process_and_analyze(audio_bytes)
+            # معالجة التنسيق وحساب المد
+            mad_time, wav_buffer = process_audio(audio_bytes)
             
             # التعرف على النص
             r = sr.Recognizer()
             with sr.AudioFile(wav_buffer) as source:
-                r.adjust_for_ambient_noise(source)
+                r.adjust_for_ambient_noise(source, duration=0.5)
                 audio_recorded = r.record(source)
                 spoken_text = r.recognize_google(audio_recorded, language="ar-SA")
             
             # عرض النتائج
             st.markdown("<div class='quran-container'>", unsafe_allow_html=True)
-            st.subheader(f"النتيجة: {spoken_text}")
+            st.subheader(f"المنطوق: {spoken_text}")
             
             # تصحيح الأحكام والمخارج بناءً على ملف CSV
             st.divider()
-            st.markdown("### 📋 تصحيح الأحكام والمخارج:")
+            st.markdown("### 📋 تحليل أحكام التجويد (بناءً على ملفك):")
             words = target_text.split()
             for word in words:
                 tajweed_info = get_tajweed_feedback(word)
@@ -122,4 +117,4 @@ if audio_record:
             st.markdown("</div>", unsafe_allow_html=True)
 
         except Exception as e:
-            st.error(f"⚠️ تعذر التحليل: يرجى رفع صوتك قليلاً والترتيل بوضوح. (السبب: {e})")
+            st.error(f"⚠️ تعذر التحليل: يرجى التأكد من تثبيت ffmpeg والترتيل بوضوح. (السبب: {e})")
