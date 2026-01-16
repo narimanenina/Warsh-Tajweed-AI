@@ -3,4 +3,5 @@ pandas
 SpeechRecognition
 librosa
 soundfile
+pydub
 streamlit-mic-recorder
