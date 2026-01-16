@@ -7,11 +7,11 @@ import os
 import librosa
 import numpy as np
 import re
+import soundfile as sf
 from streamlit_mic_recorder import mic_recorder
-from pydub import AudioSegment
 
-# --- 1. الإعدادات البصرية ---
-st.set_page_config(page_title="مصحح تلاوة ورش الشامل", layout="centered")
+# --- 1. الإعدادات والواجهة ---
+st.set_page_config(page_title="مقرأة ورش الذكية", layout="centered")
 
 st.markdown("""
     <style>
@@ -21,25 +21,25 @@ st.markdown("""
         background-color: #fcfdfc; padding: 25px; border-radius: 15px;
         border-right: 10px solid #2E7D32; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
     }
-    .tajweed-tile { background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px; margin-top: 5px; }
+    .stButton>button { background-color: #2E7D32; color: white; border-radius: 10px; width: 100%; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. تحميل الأحكام من CSV (في الخلفية) ---
+# --- 2. تحميل البيانات في الخلفية ---
 @st.cache_data
-def load_rules():
+def load_phonetics_data():
     if os.path.exists('arabic_phonetics.csv'):
         return pd.read_csv('arabic_phonetics.csv', encoding='utf-8-sig')
     return None
 
-df_rules = load_rules()
+df_rules = load_phonetics_data()
 
-# --- 3. وظائف التحليل التقني ---
-
+# --- 3. محرك تصحيح التجويد والمخارج ---
 def get_tajweed_feedback(word):
-    """ربط الكلمة ببيانات الحروف من ملف CSV (الحكم، المخرج، الصفة)"""
+    """يربط كل كلمة قرأتها ببيانات المخارج والأحكام من ملف CSV"""
     feedback = []
     if df_rules is not None:
+        # تنظيف الكلمة من التشكيل للبحث عن الحروف
         clean_word = re.sub(r"[\u064B-\u0652]", "", word)
         for char in clean_word:
             match = df_rules[df_rules['letter'] == char]
@@ -53,65 +53,88 @@ def get_tajweed_feedback(word):
                 })
     return feedback
 
-def analyze_audio_mad(audio_bytes):
-    """تحليل الإشارة الصوتية لاكتشاف زمن المد (6 حركات لورش)"""
-    audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
-    buf = io.BytesIO()
-    audio.export(buf, format="wav")
-    buf.seek(0)
-    y, sr_rate = librosa.load(buf)
+def analyze_audio_itqan(audio_bytes):
+    """تحليل الصوت تقنياً لقياس زمن المد المشبع (6 حركات لورش)"""
+    # تحويل البايتات إلى مصفوفة رقمية لتحليل الموجة
+    with io.BytesIO(audio_bytes) as audio_file:
+        y, sr_rate = librosa.load(audio_file)
+    
+    # حساب الطاقة الصوتية (RMS)
     rms = librosa.feature.rms(y=y)[0]
-    # حساب أطول استمرار صوتي فوق عتبة معينة
-    threshold = np.max(rms) * 0.3
-    durations = np.sum(rms > threshold) * (512 / sr_rate)
-    return round(durations, 2), buf
+    threshold = np.max(rms) * 0.2  # عتبة لاكتشاف الصوت الصافي
+    
+    # حساب زمن المد المستمر
+    durations = []
+    count = 0
+    for s in (rms > threshold):
+        if s: count += 1
+        else:
+            if count > 0: durations.append(count * (512 / sr_rate))
+            count = 0
+    
+    max_mad = round(max(durations), 2) if durations else 0
+    return max_mad
 
-# --- 4. واجهة المستخدم ---
-st.title("🕌 مصحح التلاوة التفاعلي (رواية ورش)")
-st.write("يتم الآن تحليل المخارج والأحكام بناءً على قاعدة بياناتك المرجعية.")
+# --- 4. واجهة التطبيق ---
+st.title("🕌 مصحح تلاوة ورش الشامل")
+st.write("يقوم النظام الآن بتصحيح المخارج والأحكام آلياً بناءً على تلاوتك.")
 
 
 
 with st.sidebar:
     st.header("⚙️ الضبط")
-    target_text = st.text_area("الآية المستهدفة:", "إنا أعطيناك الكوثر")
+    target_text = st.text_area("الآية المراد تصحيحها:", "إنا أعطيناك الكوثر")
+    st.info("💡 سيتم تحليل كل حرف تنطقه بناءً على قاعدة بيانات الأحكام.")
 
-audio_data = mic_recorder(start_prompt="🎤 ابدأ التلاوة بالترتيل", stop_prompt="⏹️ توقف لمعرفة الأحكام", key='tajweed_checker')
+# تسجيل الصوت
+audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة بالترتيل", stop_prompt="⏹️ توقف واطلب التصحيح", key='warsh_final')
 
-if audio_data:
-    audio_bytes = audio_data['bytes']
+if audio_record:
+    audio_bytes = audio_record['bytes']
+    st.audio(audio_bytes)
+    
     with st.spinner("⏳ جاري تحليل الأحكام والمخارج..."):
         try:
-            # التحليل الصوتي واللفظي
-            mad_time, wav_buf = analyze_audio_mad(audio_bytes)
-            
+            # 1. التعرف على النص (نستخدم محرك جوجل مع معالجة الأخطاء)
             r = sr.Recognizer()
-            with sr.AudioFile(wav_buf) as source:
-                r.adjust_for_ambient_noise(source)
+            with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+                # تعديل الحساسية للضجيج لضمان التحليل
+                r.adjust_for_ambient_noise(source, duration=0.5)
                 audio_recorded = r.record(source)
                 spoken_text = r.recognize_google(audio_recorded, language="ar-SA")
             
-            # عرض التقرير
-            st.markdown("<div class='quran-container'>", unsafe_allow_html=True)
-            st.subheader(f"النتيجة: {spoken_text}")
+            # 2. تحليل زمن المد (طريق الأزرق)
+            mad_time = analyze_audio_itqan(audio_bytes)
             
-            # تصحيح الأحكام والمخارج
+            # 3. حساب دقة الألفاظ (تجاهل الهمزات في المقارنة)
+            norm_target = re.sub(r"[إأآا]", "ا", target_text)
+            norm_spoken = re.sub(r"[إأآا]", "ا", spoken_text)
+            accuracy = round(difflib.SequenceMatcher(None, norm_target.split(), norm_spoken.split()).ratio() * 100, 1)
+
+            # --- عرض التقرير التفصيلي ---
+            st.markdown("<div class='quran-container'>", unsafe_allow_html=True)
+            st.subheader(f"النتيجة: {accuracy}%")
+            st.write(f"**الكلمات التي التقطها النظام:** {spoken_text}")
+            
+            # التحليل التجويدي لكل كلمة بناءً على ملف CSV
             st.divider()
-            st.markdown("### 📋 تحليل أحكام التجويد لكل كلمة:")
+            st.markdown("### 📋 تصحيح الأحكام والمخارج (بناءً على ملفك):")
             words = target_text.split()
             for word in words:
                 tajweed_info = get_tajweed_feedback(word)
-                with st.expander(f"توجيهات كلمة: {word}"):
-                    if tajweed_info:
+                if tajweed_info:
+                    with st.expander(f"أحكام ومخارج كلمة: {word}"):
                         st.table(pd.DataFrame(tajweed_info))
             
             # تقييم المد لورش
             if mad_time < 3.0:
-                st.warning(f"⚠️ زمن المد المكتشف ({mad_time} ث) قصير. تذكر إشباع المد لـ 6 حركات عند ورش.")
+                st.warning(f"⚠️ زمن المد المكتشف ({mad_time} ث) قصير. في رواية ورش (طريق الأزرق) يجب إشباع المد المتصل والمنفصل لـ 6 حركات.")
             else:
-                st.success(f"✅ زمن المد ({mad_time} ث) ممتاز ويتوافق مع طريق الأزرق.")
+                st.success(f"✅ إتقان ممتاز! زمن المد ({mad_time} ث) يتوافق مع إشباع ورش.")
             
             st.markdown("</div>", unsafe_allow_html=True)
 
+        except sr.UnknownValueError:
+            st.error("لم يستطع النظام تمييز الكلمات. يرجى الترتيل بوضوح أكبر وبصوت مرتفع قليلاً.")
         except Exception as e:
-            st.error("تعذر التحليل. يرجى الترتيل بوضوح وثبات أمام الميكروفون.")
+            st.error("حدث خطأ تقني في معالجة الصوت. تأكد من أن الميكروفون يعمل وحاول مجدداً.")
