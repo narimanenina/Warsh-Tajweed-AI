@@ -82,18 +82,18 @@ with tab1:
             try:
                 # تحويل الصوت وتطبيعه (Normalization) لزيادة الوضوح
                 raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes']))
-                raw_audio = raw_audio.normalize() # رفع مستوى الصوت آلياً لأقصى درجة آمنة
+                raw_audio = raw_audio.normalize() 
                 
                 duration = len(raw_audio) / 1000.0
                 
+                # تصدير بصيغة WAV قياسية متوافقة تماماً مع SpeechRecognition
                 wav_io = io.BytesIO()
-                raw_audio.export(wav_io, format="wav")
+                raw_audio.export(wav_io, format="wav", parameters=["-acodec", "pcm_s16le", "-ac", "1", "-ar", "16000"])
                 wav_io.seek(0)
                 
                 r = sr.Recognizer()
                 with sr.AudioFile(wav_io) as source:
-                    # التكيف مع ضجيج الخلفية لمدة نصف ثانية
-                    r.adjust_for_ambient_noise(source, duration=0.5)
+                    r.adjust_for_ambient_noise(source, duration=0.3)
                     audio_data = r.record(source)
                     spoken = r.recognize_google(audio_data, language="ar-SA")
                 
@@ -141,7 +141,6 @@ with tab2:
         S = librosa.feature.melspectrogram(y=y, sr=sr_rate)
         librosa.display.specshow(librosa.power_to_db(S, ref=np.max), ax=ax, y_axis='mel', x_axis='time')
         st.pyplot(fig)
-        st.info("التحليل الترددي يساعد في رؤية 'شدة' الحرف. حروف الجهر تظهر بطاقة أعلى.")
 
 with tab3:
     st.subheader("📈 سجل الأداء")
