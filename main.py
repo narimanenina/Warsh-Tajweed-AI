@@ -8,46 +8,29 @@ import numpy as np
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
-# --- 1. إعدادات الواجهة المتطورة ---
+# --- 1. إعدادات الواجهة ---
 st.set_page_config(page_title="مقرأة ورش الذكية", layout="wide")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Amiri&display=swap');
-    
     html, body, [class*="st-"] { 
         font-family: 'Amiri', serif; direction: rtl; text-align: center; 
     }
-
-    /* حاوية السورة المركزية المحسنة لمنع التصاق الكلمات */
     .quran-center-container {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: center;
-        align-items: center;
-        background-color: #ffffff;
-        padding: 40px;
-        border-radius: 25px;
-        border: 2px solid #2E7D32;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.08);
-        margin: 20px auto;
-        max-width: 950px;
-        line-height: 2.8;
-        gap: 15px; /* يضمن وجود مسافة ثابتة بين الكلمات */
+        display: flex; flex-wrap: wrap; justify-content: center; align-items: center;
+        background-color: #ffffff; padding: 40px; border-radius: 25px;
+        border: 2px solid #2E7D32; box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        margin: 20px auto; max-width: 950px; line-height: 2.8; gap: 15px;
     }
-
-    /* تنسيق الكلمات */
-    .word-correct { color: #2E7D32; font-size: 38px; font-weight: bold; padding: 0 5px; }
-    .word-error { color: #D32F2F; font-size: 38px; font-weight: bold; text-decoration: underline; padding: 0 5px; }
-    .word-pending { color: #444444; font-size: 38px; padding: 0 5px; }
-
-    .stButton>button { width: 280px; border-radius: 50px; font-size: 20px; }
+    .word-correct { color: #2E7D32; font-size: 38px; font-weight: bold; }
+    .word-error { color: #D32F2F; font-size: 38px; font-weight: bold; text-decoration: underline; }
+    .word-pending { color: #444444; font-size: 38px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. منطق المعالجة ---
+# --- 2. وظائف التنظيف ---
 def clean_strict(text):
-    """تنظيف النص من التشكيل لضمان دقة المقارنة اللفظية"""
     t = re.sub(r"[\u064B-\u0652]", "", text) 
     return t.strip()
 
@@ -57,13 +40,11 @@ MUKHRAJ_DATA = {
     "ل": {"info": "أدنى حافتي اللسان إلى منتهى طرفه", "tip": "تغلظ اللام في 'الله' لورش إذا سبقت بفتح أو ضم."},
 }
 
-# --- 3. عرض التطبيق ---
-st.markdown("<h1 style='color: #1B5E20;'>🕌 مصحح التلاوة التفاعلي (رواية ورش)</h1>", unsafe_allow_html=True)
-
+# --- 3. العرض الرئيسي ---
+st.markdown("<h1 style='color: #1B5E20;'>🕌 مصحح التلاوة التفاعلي</h1>", unsafe_allow_html=True)
 target_verse = "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ"
 target_words = target_verse.split()
 
-# عرض السورة بشكل مبدئي
 placeholder = st.empty()
 with placeholder.container():
     html_init = "<div class='quran-center-container'>"
@@ -72,12 +53,11 @@ with placeholder.container():
     html_init += "</div>"
     st.markdown(html_init, unsafe_allow_html=True)
 
-# ميكروفون التسجيل في المركز
 c1, c2, c3 = st.columns([1, 1, 1])
 with c2:
-    audio_record = mic_recorder(start_prompt="🎤 ابدأ الترتيل", stop_prompt="⏹️ توقف للتحليل", key='warsh_v20')
+    audio_record = mic_recorder(start_prompt="🎤 ابدأ الترتيل", stop_prompt="⏹️ توقف للتحليل", key='warsh_final_fix')
 
-# --- 4. التحليل بعد التسجيل ---
+# --- 4. التحليل ---
 if audio_record:
     with st.spinner("⏳ جاري تحليل مخارج الحروف..."):
         try:
@@ -94,7 +74,6 @@ if audio_record:
             
             spoken_words = [clean_strict(w) for w in spoken_text.split()]
             
-            # إعادة بناء العرض مع التلوين والمسافات
             result_html = "<div class='quran-center-container'>"
             errors = []
             
@@ -109,27 +88,27 @@ if audio_record:
             result_html += "</div>"
             placeholder.markdown(result_html, unsafe_allow_html=True)
 
-            # --- التقرير والنتائج ---
-            st.divider()
-            if not errors:
-                st.success("✅ هنيئاً لك! تلاوة متقنة لفظاً.")
-            else:
+            if errors:
                 st.subheader("📋 تقرير الأداء التجويدي")
                 cols = st.columns(min(len(errors), 3))
                 for idx, err in enumerate(errors):
                     with cols[idx % 3]:
-                        st.error(f"تحتاج مراجعة: {err}")
+                        st.error(f"خطأ في: {err}")
                         char = clean_strict(err)[0]
                         if char in MUKHRAJ_DATA:
-                            st.info(f"📍 مخرج الحرف ({char}): {MUKHRAJ_DATA[char]['info']}")
-                            st.write(f"💡 نصيحة: {MUKHRAJ_DATA[char]['tip']}")
-                            # عرض صورة المخرج المناسبة
+                            st.info(f"📍 مخرج ({char}): {MUKHRAJ_DATA[char]['info']}")
                             if char == "ق":
-                                
+                                st.write("💡 نصيحة: ارفع أقصى اللسان.")
+                                # سيظهر هنا توضيح بصري لمخرج القاف
+                                st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Arabic_letter_Qaf_articulation.png/220px-Arabic_letter_Qaf_articulation.png", width=150)
                             elif char == "د":
-                                
+                                st.write("💡 نصيحة: طرف اللسان مع أصول الثنايا.")
+                                # سيظهر هنا توضيح بصري لمخرج الدال
+                                st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Arabic_letter_Dal_articulation.png/220px-Arabic_letter_Dal_articulation.png", width=150)
                             elif char == "ل":
-                                
+                                st.write("💡 نصيحة: حافة اللسان.")
+            else:
+                st.success("✅ قراءة ممتازة!")
 
         except Exception as e:
-            st.warning("لم نتمكن من تحليل الصوت بدقة، يرجى المحاولة في مكان هادئ.")
+            st.error(f"حدث خطأ: {e}")
