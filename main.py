@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import librosa
+import librosa.display
 import speech_recognition as sr
 import io
 import re
 import time
-import librosa
-import librosa.display
-import numpy as np
-import matplotlib.pyplot as plt
 import random
 import datetime
 from streamlit_mic_recorder import mic_recorder
@@ -15,10 +15,9 @@ from pydub import AudioSegment
 from fpdf import FPDF
 
 # --- 1. إعدادات الواجهة والذاكرة ---
-st.set_page_config(page_title="مقرأة ورش الذكية", layout="wide", page_icon="🕌")
+st.set_page_config(page_title="مقرأة ورش الاحترافية", layout="wide", page_icon="🕌")
 
 if 'history' not in st.session_state: st.session_state.history = []
-if 'error_tracker' not in st.session_state: st.session_state.error_tracker = {}
 if 'high_scores' not in st.session_state: st.session_state.high_scores = {}
 if 'daily_seed' not in st.session_state: st.session_state.daily_seed = datetime.date.today().strftime("%Y%m%d")
 
@@ -42,15 +41,11 @@ st.markdown("""
 surahs = {
     "سورة الكوثر": "إِنَّا أَعْطَيْنَاكَ الْكَوْثَرَ فَصَلِّ لِرَبِّكَ وَانْحَرْ إِنَّ شَانِئَكَ هُوَ الْأَبْتَرُ",
     "سورة الإخلاص": "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ",
-    "سورة الفاتحة": "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ اهْدينا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ"
+    "سورة الفاتحة": "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ"
 }
 
-@st.cache_data
-def load_phonetics():
-    try: return pd.read_csv('arabic_phonetics.csv')
-    except: return None
-
-def clean_text(text): return re.sub(r"[\u064B-\u0652]", "", text).strip()
+def clean_text(text): 
+    return re.sub(r"[\u064B-\u0652]", "", text).strip()
 
 def generate_cert(user_name, surah, acc):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
@@ -69,7 +64,6 @@ st.title("🕌 منصة ورش التعليمية الذكية")
 tab1, tab2, tab3 = st.tabs(["🎯 الاختبار والتحدي", "🔬 المختبر الترددي", "📈 الإحصائيات"])
 
 with tab1:
-    # تحدي اليوم
     random.seed(st.session_state.daily_seed)
     daily_s = random.choice(list(surahs.keys()))
     st.markdown(f"<div class='challenge-box'><h3>🎯 تحدي اليوم: {daily_s}</h3></div>", unsafe_allow_html=True)
@@ -84,18 +78,27 @@ with tab1:
     audio = mic_recorder(start_prompt="🎤 ابدأ الترتيل", stop_prompt="⏹️ توقف للتحليل", key='main_recorder')
 
     if audio:
-        with st.spinner("⏳ جاري تحليل تلاوتك..."):
+        with st.spinner("⏳ جاري تحسين جودة الصوت وتحليل تلاوتك..."):
             try:
-                # معالجة الصوت
+                # تحويل الصوت وتطبيعه (Normalization) لزيادة الوضوح
                 raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes']))
+                raw_audio = raw_audio.normalize() # رفع مستوى الصوت آلياً لأقصى درجة آمنة
+                
                 duration = len(raw_audio) / 1000.0
+                
+                wav_io = io.BytesIO()
+                raw_audio.export(wav_io, format="wav")
+                wav_io.seek(0)
+                
                 r = sr.Recognizer()
-                with sr.AudioFile(io.BytesIO(audio['bytes'])) as source:
-                    spoken = r.recognize_google(r.record(source), language="ar-SA")
+                with sr.AudioFile(wav_io) as source:
+                    # التكيف مع ضجيج الخلفية لمدة نصف ثانية
+                    r.adjust_for_ambient_noise(source, duration=0.5)
+                    audio_data = r.record(source)
+                    spoken = r.recognize_google(audio_data, language="ar-SA")
                 
                 spoken_w = [clean_text(w) for w in spoken.split()]
                 
-                # عرض ملون وحساب الدقة
                 res_html = "<div class='quran-container'>"
                 correct = 0
                 for w in target_w:
@@ -110,24 +113,23 @@ with tab1:
                 acc = (correct / len(target_w)) * 100
                 wpm = (correct / duration) * 60 if duration > 0 else 0
                 
-                # الإحصائيات
                 c1, c2, c3 = st.columns(3)
                 c1.metric("🎯 الدقة", f"{round(acc)}%")
                 c2.metric("⏱️ الزمن", f"{round(duration, 1)} ث")
                 c3.metric("🚀 الطلاقة", f"{round(wpm)} كلمة/د")
                 
-                # حفظ السجل
                 st.session_state.history.append({"سورة": selected_s, "دقة": acc, "سرعة": wpm})
                 
-                # الشهادة
                 if acc >= 90:
                     st.success("🏆 إتقان مذهل!")
                     u_name = st.text_input("اسمك للشهادة:", "هاني معمري")
                     if st.button("📄 إصدار الشهادة"):
                         pdf_data = generate_cert(u_name, selected_s, round(acc))
                         st.download_button("تحميل الشهادة", pdf_data, f"Cert_{selected_s}.pdf", "application/pdf")
-
-            except: st.error("يرجى المحاولة بصوت أوضح.")
+            except sr.UnknownValueError:
+                st.error("⚠️ لم يتمكن المحرك من تمييز الكلمات. حاول القراءة ببطء ووضوح أكثر.")
+            except Exception as e:
+                st.error(f"⚠️ حدث خطأ أثناء التحليل: {e}")
 
 with tab2:
     st.subheader("🔬 تحليل مخارج الحروف (بصمة الصوت)")
@@ -139,8 +141,7 @@ with tab2:
         S = librosa.feature.melspectrogram(y=y, sr=sr_rate)
         librosa.display.specshow(librosa.power_to_db(S, ref=np.max), ax=ax, y_axis='mel', x_axis='time')
         st.pyplot(fig)
-        st.info(f"يُظهر الرسم البياني توزيع الترددات لحرف {test_char}. ابحث عن مناطق التركيز الطاقي.")
-        
+        st.info("التحليل الترددي يساعد في رؤية 'شدة' الحرف. حروف الجهر تظهر بطاقة أعلى.")
 
 with tab3:
     st.subheader("📈 سجل الأداء")
@@ -148,4 +149,4 @@ with tab3:
         df_hist = pd.DataFrame(st.session_state.history)
         st.line_chart(df_hist['دقة'])
         st.table(df_hist)
-    else: st.write("لا توجد بيانات.")
+    else: st.write("لا توجد بيانات مسجلة حالياً.")
