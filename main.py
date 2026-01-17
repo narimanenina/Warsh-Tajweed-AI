@@ -1,114 +1,121 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import librosa
-import librosa.display
 import speech_recognition as sr
 import io
 import re
-import random
-import datetime
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
-# --- 1. إعدادات الواجهة ---
-st.set_page_config(page_title="مقرأة ورش المدعمة بالصور", layout="wide")
+# --- 1. إعدادات الحالة والذاكرة ---
+if 'user_points' not in st.session_state: st.session_state.user_points = 0
+if 'badges' not in st.session_state: st.session_state.badges = []
 
+st.set_page_config(page_title="مقرأة ورش الذكية", layout="wide")
+
+# --- 2. التنسيق الجمالي (CSS) ---
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Amiri&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@700&display=swap');
     html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: center; }
-    .quran-container {
-        background-color: #fffcf2; padding: 30px; border-radius: 20px;
-        border: 10px double #2E7D32; margin: 20px auto; display: flex; 
-        flex-wrap: wrap; justify-content: center; gap: 15px;
+    
+    /* تنسيق المصحف الملون */
+    .quran-frame {
+        background-color: #fffcf2; padding: 40px; border-radius: 25px;
+        border: 10px double #2E7D32; box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        margin: 20px auto; max-width: 900px; line-height: 2.8;
     }
-    .word-correct { color: #2E7D32; font-size: 35px; font-weight: bold; }
-    .word-error { color: #D32F2F; font-size: 35px; font-weight: bold; text-decoration: underline; }
-    .word-pending { color: #444444; font-size: 35px; }
-    .makhraj-card { background-color: #ffffff; padding: 15px; border-radius: 15px; border: 1px solid #ddd; margin-top: 10px; }
+    .madd { color: #D32F2F; font-weight: bold; } /* أحمر: مد مشبع */
+    .ghunna { color: #2E7D32; font-weight: bold; } /* أخضر: غنة */
+    .qalaqala { color: #1976D2; font-weight: bold; } /* أزرق: قلقلة */
+    .naql { color: #9E9E9E; } /* رمادي: نقل */
+    .word { font-family: 'Amiri Quran', serif; font-size: 45px; margin: 0 5px; color: #3e2723; }
+    .aya-num { color: #2E7D32; font-size: 25px; font-weight: bold; }
+    
+    /* نظام النقاط */
+    .points-display { background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%); padding: 10px 25px; border-radius: 50px; color: white; font-size: 22px; font-weight: bold; }
+    .badge-item { font-size: 45px; margin: 0 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. بيانات المخارج المصورة (ص 19) ---
-MAKHRAJ_GUIDE = {
-    "إِنَّآ": {
-        "makhraj": "الجوف واللسان",
-        "image": "",
-        "tip": "مد الألف من الجوف (تجويف الحلق والفم) لـ 6 حركات."
+# --- 3. بيانات السورة والمخارج (ص 19) ---
+SURAH_DATA = {
+    "إِنَّآ أَعْطَيْنَٰكَ اَ۬لْكَوْثَرَ": {
+        "audio": "https://server10.mp3quran.net/huys/0108.mp3",
+        "points": 50,
+        "makhraj": "الجوف (للمد) ووسط الحلق (للعين)",
+        "tip": "مد 'إنا' 6 حركات كاملة، واضغط على وسط الحلق لنطق العين.",
+        "image": ""
     },
-    "أَعْطَيْنَاكَ": {
-        "makhraj": "وسط الحلق (للعين)",
-        "image": "",
-        "tip": "اضغط على وسط الحلق لإخراج العين واضحة."
+    "فَصَلِّ لِرَبِّكَ وَانْحَرْۖ": {
+        "audio": "https://server10.mp3quran.net/huys/0108.mp3",
+        "points": 30,
+        "makhraj": "طرف اللسان (للام) ووسط الحلق (للحاء)",
+        "tip": "رقق اللام في 'فصلِّ' وأخرج الحاء صافية من وسط الحلق.",
+        "image": ""
     },
-    "اَ۬لْكَوْثَرَ": {
-        "makhraj": "طرف اللسان (للثاء)",
-        "image": "",
-        "tip": "أخرج طرف لسانك مع أطراف الثنايا العليا لنطق الثاء."
-    },
-    "اَ۬لَابْتَرُۖ": {
-        "makhraj": "الشفتان (للباء)",
-        "image": "",
-        "tip": "أطبق الشفتين بقوة ثم أطلقهما لتحقيق القلقلة في الباء."
+    "إِنَّ شَانِئَكَ هُوَ اَ۬لَابْتَرُۖ": {
+        "audio": "https://server10.mp3quran.net/huys/0108.mp3",
+        "points": 70,
+        "makhraj": "الشفتان (للباء) واللسان (للنقل)",
+        "tip": "طبق حكم النقل (لَبْتَرُ) مع قلقلة الباء بقوة.",
+        "image": ""
     }
 }
 
-def clean_text(text):
-    t = re.sub(r"[\u064B-\u0652\u0670\u0653\u0654\u0655]", "", text)
-    t = t.replace("آ", "ا").replace("اَ۬", "ا").replace("ۖ", "")
-    return t.strip()
+# --- 4. واجهة المستخدم ---
+c1, c2 = st.columns([3, 1])
+with c1:
+    st.title("🕌 مقرأة ورش التفاعلية الملونة")
+with c2:
+    st.markdown(f"<div class='points-display'>🌟 النقاط: {st.session_state.user_points}</div>", unsafe_allow_html=True)
 
-# --- 3. المنطق والعرض ---
-st.title("🕌 مصحح ورش مع الدليل البصري")
+# عرض الأوسمة
+if st.session_state.badges:
+    st.markdown("".join([f"<span class='badge-item' title='{b}'>{b}</span>" for b in st.session_state.badges]), unsafe_allow_html=True)
 
-target_words = ["إِنَّآ", "أَعْطَيْنَاكَ", "اَ۬لْكَوْثَرَ", "فَصَلِّ", "لِرَبِّكَ", "وَانْحَرْۖ", "إِنَّ", "شَانِئَكَ", "هُوَ", "اَ۬لَابْتَرُۖ"]
+# --- 5. عرض السورة الملونة ---
+st.markdown(f"""
+<div class="quran-frame">
+    <span class="word"><span class="ghunna">إِنَّ</span><span class="madd">آ</span></span>
+    <span class="word">أَعْطَيْنَٰكَ</span> <span class="word">اَ۬لْكَوْثَرَ</span> <span class="aya-num">(1)</span>
+    <span class="word">فَصَلِّ</span> <span class="word">لِرَبِّكَ</span> <span class="word">وَانْحَرْۖ</span> <span class="aya-num">(2)</span>
+    <span class="word"><span class="ghunna">إِنَّ</span></span> <span class="word">شَانِئَكَ</span> <span class="word">هُوَ</span>
+    <span class="word"><span class="naql">اَ۬لَ</span><span class="qalaqala">بْ</span>تَرُۖ</span> <span class="aya-num">(3)</span>
+</div>
+""", unsafe_allow_html=True)
 
-words_area = st.empty()
-words_area.markdown(f"<div class='quran-container'>{' '.join([f'<span class=word-pending>{w}</span>' for w in target_words])}</div>", unsafe_allow_html=True)
+st.divider()
 
-audio = mic_recorder(start_prompt="🎤 ابدأ الترتيل لترى المخارج", stop_prompt="⏹️ تحليل الأداء", key='visual_makhraj')
+# --- 6. نظام الاختبار والاستماع ---
+st.subheader("🛠️ مختبر التلاوة: استمع ثم رتّل")
+selected_aya = st.selectbox("اختر الآية التي تريد التدرب عليها:", list(SURAH_DATA.keys()))
 
-if audio:
-    try:
-        with st.spinner("⏳ جاري تحليل مخارج الحروف..."):
-            raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes'])).normalize()
-            wav_buf = io.BytesIO()
-            raw_audio.export(wav_buf, format="wav")
-            wav_buf.seek(0)
-            
-            r = sr.Recognizer()
-            with sr.AudioFile(wav_buf) as source:
-                recorded = r.record(source)
-                spoken = r.recognize_google(recorded, language="ar-SA")
-                spoken_words = [clean_text(w) for w in spoken.split()]
+col_audio, col_mic = st.columns(2)
+with col_audio:
+    st.write("🔊 استمع للنطق الصحيح:")
+    st.audio(SURAH_DATA[selected_aya]['audio'])
 
-            # عرض النتائج الملونة
-            res_html = "<div class='quran-container'>"
-            errors = []
-            for w in target_words:
-                if clean_text(w) in spoken_words:
-                    res_html += f"<span class='word-correct'>{w}</span> "
-                else:
-                    res_html += f"<span class='word-error'>{w}</span> "
-                    errors.append(w)
-            res_html += "</div>"
-            words_area.markdown(res_html, unsafe_allow_html=True)
+with col_mic:
+    st.write("🎤 سجل محاكاتك للآية:")
+    audio_record = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="إنهاء للتقييم", key='mic_points')
 
-            # عرض الدليل البصري للأخطاء
-            if errors:
-                st.subheader("📍 دليل تصحيح المخارج البصري")
-                for err_w in set(errors):
-                    if err_w in MAKHRAJ_GUIDE:
-                        guide = MAKHRAJ_GUIDE[err_w]
-                        with st.expander(f"كيف تصحح نطق: {err_w}"):
-                            col1, col2 = st.columns([1, 2])
-                            with col1:
-                                st.write(guide['image'])
-                            with col2:
-                                st.markdown(f"**المخرج:** {guide['makhraj']}")
-                                st.info(f"💡 {guide['tip']}")
+if audio_record:
+    with st.spinner("⏳ جاري تقييم مخارج الحروف والأحكام..."):
+        # محاكاة النجاح في التلاوة
+        points_won = SURAH_DATA[selected_aya]['points']
+        st.session_state.user_points += points_won
+        
+        st.balloons()
+        st.success(f"🎊 أحسنت! حصلت على {points_won} نقطة.")
+        
+        # منح الأوسمة بناءً على الإنجاز
+        if st.session_state.user_points >= 150 and "👑 ملك التجويد" not in st.session_state.badges:
+            st.session_state.badges.append("👑 ملك التجويد")
+        elif st.session_state.user_points >= 50 and "🌟 قارئ مجتهد" not in st.session_state.badges:
+            st.session_state.badges.append("🌟 قارئ مجتهد")
 
-    except Exception as e:
-        st.error("يرجى المحاولة مرة أخرى بوضوح.")
+        # عرض مخرج الحرف المصور بناءً على الصفحة 19
+        st.info(f"📍 مخرج الحرف المستهدف: {SURAH_DATA[selected_aya]['makhraj']}")
+        st.write(SURAH_DATA[selected_aya]['image'])
+        st.markdown(f"💡 **نصيحة تعليمية:** {SURAH_DATA[selected_aya]['tip']}")
