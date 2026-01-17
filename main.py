@@ -1,16 +1,15 @@
 import streamlit as st
-import time
 import speech_recognition as sr
 import io
 import re
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
-# --- 1. إعدادات الحالة والواجهة ---
-if 'is_testing' not in st.session_state: st.session_state.is_testing = False
-if 'spoken_text' not in st.session_state: st.session_state.spoken_text = ""
+# --- 1. إعدادات الواجهة ---
+st.set_page_config(page_title="مقرأة ورش الذكية", layout="wide")
 
-st.set_page_config(page_title="مقرأة ورش الذكية - Tarteel Clone", layout="wide")
+if 'recognized_words' not in st.session_state:
+    st.session_state.recognized_words = []
 
 st.markdown("""
     <style>
@@ -18,63 +17,59 @@ st.markdown("""
     html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: center; }
     
     .quran-container {
-        background-color: #ffffff; padding: 40px; border-radius: 20px;
-        border: 2px solid #2E7D32; box-shadow: 0 4px 20px rgba(0,0,0,0.05);
-        margin: 20px auto; max-width: 800px; line-height: 3;
+        background-color: #fffcf2; padding: 40px; border-radius: 25px;
+        border: 10px double #2E7D32; margin: 20px auto; max-width: 900px; line-height: 2.8;
     }
-    .word-highlight { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; font-weight: bold; border-bottom: 3px solid #2E7D32; }
-    .word-hidden { background-color: #eee; color: #eee; border-radius: 5px; font-size: 45px; margin: 0 5px; cursor: pointer; }
-    .word-normal { font-family: 'Amiri Quran', serif; font-size: 45px; color: #3e2723; margin: 0 5px; }
+    .word-visible { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; font-weight: bold; transition: all 0.5s ease-in-out; }
+    .word-hidden { font-family: 'Amiri Quran', serif; font-size: 45px; color: #eee; opacity: 0.1; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- 2. البيانات (سورة الكوثر برواية ورش) ---
-surah_words = ["إِنَّآ", "أَعْطَيْنَٰكَ", "اَ۬لْكَوْثَرَ", "فَصَلِّ", "لِرَبِّكَ", "وَانْحَرْۖ", "إِنَّ", "شَانِئَكَ", "هُوَ", "اَ۬لَابْتَرُۖ"]
+surah_data = [
+    {"text": "إِنَّآ", "clean": "انا"},
+    {"text": "أَعْطَيْنَٰكَ", "clean": "اعطيناك"},
+    {"text": "اَ۬لْكَوْثَرَ", "clean": "الكوثر"},
+    {"text": "فَصَلِّ", "clean": "فصل"},
+    {"text": "لِرَبِّكَ", "clean": "لربك"},
+    {"text": "وَانْحَرْۖ", "clean": "وانحر"},
+    {"text": "إِنَّ", "clean": "ان"},
+    {"text": "شَانِئَكَ", "clean": "شانئك"},
+    {"text": "هُوَ", "clean": "هو"},
+    {"text": "اَ۬لَابْتَرُۖ", "clean": "الابتر"}
+]
 
 def clean_text(text):
-    return re.sub(r"[\u064B-\u0652\u0670\u0653\u0654\u0655]", "", text).strip()
+    t = re.sub(r"[\u064B-\u0652\u0670\u0653\u0654\u0655]", "", text)
+    t = t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    return t.strip()
 
-# --- 3. تصميم واجهة "ترتيل" ---
-st.title("🕌 تطبيق ترتيل - رواية ورش")
-st.write("استخدم الميكروفون للبدء في التلاوة وسيقوم التطبيق بتتبع كلماتك.")
+# --- 3. العرض الرئيسي ---
+st.title("🕌 مصحح التلاوة: تتبع الكلمات الحي")
+st.write("سجل تلاوتك، وستظهر الكلمات على الشاشة بمجرد نطقها بشكل صحيح.")
 
-# تبديل وضع "الاختبار" (إخفاء الآيات)
-c1, c2 = st.columns(2)
-with c1:
-    if st.button("👁️ عرض الآيات"): st.session_state.is_testing = False
-with c2:
-    if st.button("🙈 وضع الاختبار (إخفاء)"): st.session_state.is_testing = True
+# حاوية عرض الكلمات
+quran_area = st.empty()
 
-# عرض المصحف
-display_html = "<div class='quran-container'>"
-spoken_words = st.session_state.spoken_text.split()
-
-for w in surah_words:
-    clean_w = clean_text(w)
-    if st.session_state.is_testing:
-        # في وضع الاختبار، الكلمة تظهر فقط إذا نطقها المستخدم صح
-        if clean_w in spoken_words:
-            display_html += f"<span class='word-normal'>{w}</span> "
+def update_display():
+    html = "<div class='quran-container'>"
+    for item in surah_data:
+        if item['clean'] in st.session_state.recognized_words:
+            html += f"<span class='word-visible'>{item['text']}</span> "
         else:
-            display_html += f"<span class='word-hidden'>&nbsp;&nbsp;{w}&nbsp;&nbsp;</span> "
-    else:
-        # في الوضع العادي، يتم تلوين الكلمة المنطوقة حالياً
-        if clean_w in spoken_words:
-            display_html += f"<span class='word-highlight'>{w}</span> "
-        else:
-            display_html += f"<span class='word-normal'>{w}</span> "
-display_html += "</div>"
+            html += f"<span class='word-hidden'>{item['text']}</span> "
+    html += "</div>"
+    quran_area.markdown(html, unsafe_allow_html=True)
 
-st.markdown(display_html, unsafe_allow_html=True)
+update_display()
 
 st.divider()
 
-# --- 4. محرك التعرف الصوتي (Tarteel Engine) ---
-st.subheader("🎤 ابدأ التلاوة")
-audio = mic_recorder(start_prompt="اضغط للتلاوة", stop_prompt="توقف للتحليل", key='tarteel_mic')
+# --- 4. معالجة التسجيل والتعرف ---
+audio = mic_recorder(start_prompt="🎤 ابدأ التلاوة الآن", stop_prompt="⏹️ توقف لمعالجة الكلمات", key='live_tracker')
 
 if audio:
-    with st.spinner("⏳ جاري التعرف على تلاوتك..."):
+    with st.spinner("⏳ جاري تمييز الكلمات المنطوقة..."):
         try:
             raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes'])).normalize()
             wav_io = io.BytesIO()
@@ -85,17 +80,19 @@ if audio:
             with sr.AudioFile(wav_io) as source:
                 r.adjust_for_ambient_noise(source)
                 audio_data = r.record(source)
-                # استخدام محرك جوجل للتعرف على الكلام (يدعم العربية بوضوح)
                 text = r.recognize_google(audio_data, language="ar-SA")
-                st.session_state.spoken_text = clean_text(text)
-                st.rerun() # تحديث الواجهة فوراً لتلوين الكلمات
                 
-        except Exception as e:
-            st.warning("يرجى القراءة بوضوح. تأكد من اتصال الإنترنت.")
+                # تحليل الكلمات المنطوقة وإضافتها للسجل
+                new_words = [clean_text(w) for w in text.split()]
+                for nw in new_words:
+                    if nw not in st.session_state.recognized_words:
+                        st.session_state.recognized_words.append(nw)
+                
+                st.rerun() # تحديث الواجهة لإظهار الكلمات الجديدة
 
-# --- 5. ميزات إضافية (من الفيديو) ---
-with st.sidebar:
-    st.header("⚙️ الإعدادات")
-    st.selectbox("اختر القارئ للمحاكاة:", ["بلال عيناوي (ورش)", "الحصري (ورش)"])
-    st.slider("سرعة التتبع:", 0.5, 2.0, 1.0)
-    st.checkbox("تنبيه عند الخطأ في الحكم")
+        except Exception as e:
+            st.warning("لم يتم التعرف على الكلمات بشكل دقيق، حاول مرة أخرى بوضوح.")
+
+if st.button("🔄 إعادة الاختبار"):
+    st.session_state.recognized_words = []
+    st.rerun()
