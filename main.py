@@ -1,4 +1,6 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
 import speech_recognition as sr
 import io
 import re
@@ -6,87 +8,104 @@ from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
 # --- 1. إعدادات الحالة والواجهة ---
-if 'recognized_words' not in st.session_state:
-    st.session_state.recognized_words = []
-if 'is_hidden' not in st.session_state:
-    st.session_state.is_hidden = False
-if 'last_feedback' not in st.session_state:
-    st.session_state.last_feedback = ""
+if 'user_points' not in st.session_state: st.session_state.user_points = 0
+if 'badges' not in st.session_state: st.session_state.badges = []
+if 'recognized_words' not in st.session_state: st.session_state.recognized_words = []
+if 'is_hidden' not in st.session_state: st.session_state.is_hidden = False
 
-st.set_page_config(page_title="مقرأة ورش - المصحح الذكي", layout="wide")
+st.set_page_config(page_title="مقرأة ورش الذكية", layout="wide")
 
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@700&display=swap');
     html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: center; }
     
-    .quran-container {
-        background-color: #fffcf2; padding: 40px; border-radius: 25px;
-        border: 10px double #2E7D32; margin: 20px auto; max-width: 900px; line-height: 2.8;
+    .quran-frame {
+        background-color: #fffcf2; padding: 35px; border-radius: 25px;
+        border: 10px double #2E7D32; box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        margin: 20px auto; max-width: 900px; line-height: 2.8;
     }
     .word-correct { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; font-weight: bold; }
-    .word-error { font-family: 'Amiri Quran', serif; font-size: 45px; color: #D32F2F; text-decoration: line-through; opacity: 0.6; }
     .word-faded { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; opacity: 0.2; }
-    .word-hidden { background-color: #ddd; color: #ddd; border-radius: 8px; font-size: 45px; margin: 0 5px; }
+    .word-test { background-color: #ddd; color: #ddd; border-radius: 8px; font-size: 45px; margin: 0 5px; }
+    
+    .points-display { background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%); padding: 10px 25px; border-radius: 50px; color: white; font-size: 22px; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. البيانات والأحكام (بناءً على ص 19 وص 80) ---
-#
+# --- 2. دالة تحميل الأحكام من CSV ---
+def load_tajweed_data():
+    try:
+        df = pd.read_csv('arabic_phonetics.csv', encoding='utf-8')
+        return df
+    except:
+        return None
+
+df_rules = load_tajweed_data()
+
+# --- 3. بيانات السورة (ورش) ---
 surah_data = [
-    {"text": "إِنَّآ", "clean": "ان", "rule": "مد مشبع 6 حركات", "makhraj": "الجوف"},
-    {"text": "أَعْطَيْنَٰكَ", "clean": "اعطيناك", "rule": "تحقيق الهمزة", "makhraj": "أقصى الحلق / وسط الحلق (للعين)"},
-    {"text": "اَ۬لْكَوْثَرَ", "clean": "الكوثر", "rule": "ترقيق الراء وصلاً", "makhraj": "طرف اللسان (للثاء)"},
-    {"text": "فَصَلِّ", "clean": "فصل", "rule": "تغليظ اللام (ورش)", "makhraj": "طرف اللسان"},
-    {"text": "لِرَبِّكَ", "clean": "لربك", "rule": "ترقيق الراء", "makhraj": "طرف اللسان"},
-    {"text": "وَانْحَرْۖ", "clean": "وانحر", "rule": "إظهار النون", "makhraj": "وسط الحلق (للحاء)"},
-    {"text": "إِنَّ", "clean": "ان", "rule": "غنة أكمل ما تكون", "makhraj": "الخيشوم"},
-    {"text": "شَانِئَكَ", "clean": "شانئك", "rule": "تحقيق الحركات", "makhraj": "وسط اللسان (للشين)"},
-    {"text": "هُوَ", "clean": "هو", "rule": "فتح الهاء", "makhraj": "أقصى الحلق"},
-    {"text": "اَ۬لَابْتَرُۖ", "clean": "الابتر", "rule": "النقل وقلقلة الباء", "makhraj": "الشفتان (للباء)"}
+    {"text": "إِنَّآ", "clean": "ان", "audio": "https://server10.mp3quran.net/huys/0108.mp3"},
+    {"text": "أَعْطَيْنَٰكَ", "clean": "اعطيناك"},
+    {"text": "اَ۬لْكَوْثَرَ", "clean": "الكوثر"},
+    {"text": "فَصَلِّ", "clean": "فصل"},
+    {"text": "لِرَبِّكَ", "clean": "لربك"},
+    {"text": "وَانْحَرْۖ", "clean": "وانحر"},
+    {"text": "إِنَّ", "clean": "ان"},
+    {"text": "شَانِئَكَ", "clean": "شانئك"},
+    {"text": "هُوَ", "clean": "هو"},
+    {"text": "اَ۬لَابْتَرُۖ", "clean": "الابتر"}
 ]
 
-def clean_text(text):
+def clean_input(text):
     t = re.sub(r"[\u064B-\u0652\u0670\u0653\u0654\u0655]", "", text)
     t = t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     return t.strip()
 
-# --- 3. الواجهة والأزرار ---
-st.title("🕌 مصحح تلاوة ورش (AI Tarteel)")
+# --- 4. واجهة المستخدم والأزرار ---
+c1, c2 = st.columns([3, 1])
+with c1:
+    st.title("🕌 مصحح تلاوة ورش الاحترافي")
+with c2:
+    st.markdown(f"<div class='points-display'>🌟 النقاط: {st.session_state.user_points}</div>", unsafe_allow_html=True)
 
-col1, col2, col3 = st.columns(3)
-with col1:
+col_btn1, col_btn2, col_btn3 = st.columns(3)
+with col_btn1:
     if st.button("👁️ إظهار السورة"):
         st.session_state.is_hidden = False
         st.rerun()
-with col2:
-    if st.button("🙈 إخفاء السورة"):
+with col_btn2:
+    if st.button("🙈 وضع الاختبار"):
         st.session_state.is_hidden = True
         st.rerun()
-with col3:
-    if st.button("🔄 إعادة"):
+with col_btn3:
+    if st.button("🔄 إعادة التصفير"):
         st.session_state.recognized_words = []
+        st.session_state.user_points = 0
         st.rerun()
 
-# عرض السورة
-html = "<div class='quran-container'>"
+# عرض السورة التفاعلي
+html = "<div class='quran-frame'>"
 for item in surah_data:
     if item['clean'] in st.session_state.recognized_words:
         html += f"<span class='word-correct'>{item['text']}</span> "
     elif st.session_state.is_hidden:
-        html += f"<span class='word-hidden'>&nbsp;{item['text']}&nbsp;</span> "
+        html += f"<span class='word-test'>&nbsp;{item['text']}&nbsp;</span> "
     else:
         html += f"<span class='word-faded'>{item['text']}</span> "
 html += "</div>"
 st.markdown(html, unsafe_allow_html=True)
 
-# --- 4. محرك التصحيح الصارم ---
-st.subheader("🎤 ابدأ التلاوة: سيتم تصحيح الكلمات والحركات")
-audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="إنهاء للتحليل", key='tarteel_strict_v5')
+st.divider()
+
+# --- 5. محرك التصحيح والتقييم ---
+st.subheader("🎤 سجل تلاوتك الآن")
+audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="توقف للتحليل", key='tarteel_final_v1')
 
 if audio:
-    with st.spinner("⏳ جاري تحليل التجويد والمخارج..."):
+    with st.spinner("⏳ جاري تحليل مخارج الحروف والأحكام..."):
         try:
+            # معالجة الصوت
             raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes'])).normalize()
             wav_io = io.BytesIO()
             raw_audio.export(wav_io, format="wav")
@@ -98,23 +117,36 @@ if audio:
                 audio_data = r.record(source)
                 text = r.recognize_google(audio_data, language="ar-SA")
                 
-                spoken_words = [clean_text(w) for w in text.split()]
+                spoken_words = [clean_input(w) for w in text.split()]
                 
-                # فحص الأخطاء
+                # تحديث الكلمات والنقاط
+                found_new = False
                 for item in surah_data:
-                    if item['clean'] in spoken_words:
-                        if item['clean'] not in st.session_state.recognized_words:
-                            st.session_state.recognized_words.append(item['clean'])
-                    else:
-                        st.session_state.last_feedback = f"⚠️ انتبه لكلمة '{item['text']}': تأكد من {item['rule']} ومخرج {item['makhraj']}."
-
+                    if item['clean'] in spoken_words and item['clean'] not in st.session_state.recognized_words:
+                        st.session_state.recognized_words.append(item['clean'])
+                        st.session_state.user_points += 10
+                        found_new = True
+                
+                if found_new:
+                    st.balloons()
+                    st.success("أحسنت! تم التعرف على كلمات جديدة.")
+                else:
+                    st.error(f"التلاوة غير مطابقة. سمعتُ: {text}")
+                
                 st.rerun()
 
         except Exception as e:
-            st.error("يرجى القراءة بوضوح تام لتفعيل التصحيح.")
+            st.error("يرجى القراءة بوضوح. تأكد من مخارج الحروف.")
 
-# --- 5. التغذية الراجعة (Feedback) بناءً على ص 19 ---
-if st.session_state.last_feedback:
-    st.info(st.session_state.last_feedback)
+# --- 6. عرض نصائح المخارج من CSV (ص 19) ---
+if st.session_state.recognized_words and df_rules is not None:
+    st.subheader("📍 دليل تصحيح المخارج (بناءً على تلاوتك)")
+    last_word = st.session_state.recognized_words[-1]
+    # محاولة مطابقة الحرف الأول من الكلمة مع جدول المخارج
+    first_char = last_word[0]
+    advice = df_rules[df_rules['letter'] == first_char]
     
-    st.write("📍 المرجع: مخارج الحروف - الصفحة 19 من كتاب أحكام التجويد لورش.")
+    if not advice.empty:
+        info = advice.iloc[0]
+        st.info(f"نصيحة لحرف ({first_char}): {info['description']}")
+        st.write(f"المخرج: {info['place']}")
