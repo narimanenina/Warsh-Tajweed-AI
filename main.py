@@ -5,11 +5,13 @@ import re
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
-# --- 1. إعدادات الواجهة ---
-st.set_page_config(page_title="مقرأة ورش الذكية", layout="wide")
-
+# --- 1. إعدادات الحالة والواجهة ---
 if 'recognized_words' not in st.session_state:
     st.session_state.recognized_words = []
+if 'is_hidden' not in st.session_state:
+    st.session_state.is_hidden = False
+
+st.set_page_config(page_title="مقرأة ورش - تتبع حي", layout="wide")
 
 st.markdown("""
     <style>
@@ -20,8 +22,9 @@ st.markdown("""
         background-color: #fffcf2; padding: 40px; border-radius: 25px;
         border: 10px double #2E7D32; margin: 20px auto; max-width: 900px; line-height: 2.8;
     }
-    .word-visible { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; font-weight: bold; transition: all 0.5s ease-in-out; }
+    .word-visible { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; font-weight: bold; }
     .word-hidden { font-family: 'Amiri Quran', serif; font-size: 45px; color: #eee; opacity: 0.1; }
+    .word-test { background-color: #ddd; color: #ddd; border-radius: 8px; font-size: 45px; margin: 0 5px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -44,32 +47,43 @@ def clean_text(text):
     t = t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     return t.strip()
 
-# --- 3. العرض الرئيسي ---
-st.title("🕌 مصحح التلاوة: تتبع الكلمات الحي")
-st.write("سجل تلاوتك، وستظهر الكلمات على الشاشة بمجرد نطقها بشكل صحيح.")
+# --- 3. أزرار التحكم ---
+st.title("🕌 تطبيق ترتيل ورش: تتبع وإخفاء")
 
-# حاوية عرض الكلمات
-quran_area = st.empty()
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("👁️ إظهار السورة كاملة"):
+        st.session_state.is_hidden = False
+with col2:
+    if st.button("🙈 وضع الاختبار (إخفاء)"):
+        st.session_state.is_hidden = True
 
+# --- 4. عرض السورة التفاعلي ---
 def update_display():
     html = "<div class='quran-container'>"
     for item in surah_data:
+        # إذا كانت الكلمة قد نُطقت بشكل صحيح
         if item['clean'] in st.session_state.recognized_words:
             html += f"<span class='word-visible'>{item['text']}</span> "
+        # إذا كان وضع الإخفاء مفعلاً والكلمة لم تُنطق بعد
+        elif st.session_state.is_hidden:
+            html += f"<span class='word-test'>&nbsp;{item['text']}&nbsp;</span> "
+        # الوضع العادي (كلمات باهتة تنتظر النطق)
         else:
             html += f"<span class='word-hidden'>{item['text']}</span> "
     html += "</div>"
-    quran_area.markdown(html, unsafe_allow_html=True)
+    st.markdown(html, unsafe_allow_html=True)
 
 update_display()
 
 st.divider()
 
-# --- 4. معالجة التسجيل والتعرف ---
-audio = mic_recorder(start_prompt="🎤 ابدأ التلاوة الآن", stop_prompt="⏹️ توقف لمعالجة الكلمات", key='live_tracker')
+# --- 5. التسجيل ومعالجة الصوت ---
+st.subheader("🎤 ابدأ التلاوة ليظهر النص")
+audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="توقف لإظهار الكلمات", key='tarteel_live')
 
 if audio:
-    with st.spinner("⏳ جاري تمييز الكلمات المنطوقة..."):
+    with st.spinner("⏳ جاري تحليل تلاوتك..."):
         try:
             raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes'])).normalize()
             wav_io = io.BytesIO()
@@ -82,17 +96,18 @@ if audio:
                 audio_data = r.record(source)
                 text = r.recognize_google(audio_data, language="ar-SA")
                 
-                # تحليل الكلمات المنطوقة وإضافتها للسجل
+                # تحليل الكلمات المنطوقة
                 new_words = [clean_text(w) for w in text.split()]
                 for nw in new_words:
                     if nw not in st.session_state.recognized_words:
                         st.session_state.recognized_words.append(nw)
                 
-                st.rerun() # تحديث الواجهة لإظهار الكلمات الجديدة
+                # نجاح المعالجة يفرض تحديث الواجهة
+                st.rerun()
 
         except Exception as e:
-            st.warning("لم يتم التعرف على الكلمات بشكل دقيق، حاول مرة أخرى بوضوح.")
+            st.error("لم نتمكن من تمييز الكلمات، يرجى المحاولة بصوت أوضح.")
 
-if st.button("🔄 إعادة الاختبار"):
+if st.button("🔄 إعادة الاختبار من جديد"):
     st.session_state.recognized_words = []
     st.rerun()
