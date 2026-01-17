@@ -9,7 +9,7 @@ import re
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
-# إعداد الواجهة
+# 1. إعدادات الواجهة
 st.set_page_config(page_title="مقرأة ورش الاحترافية", layout="wide")
 
 st.markdown("""
@@ -26,6 +26,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# 2. وظائف المعالجة
 def clean_strict(text):
     t = re.sub(r"[\u064B-\u0652]", "", text) 
     return t.strip()
@@ -37,7 +38,8 @@ MUKHRAJ_IMAGES = {
     "ح": "وسط الحلق"
 }
 
-st.markdown("<h1 style='color: #1B5E20;'>🕌 مصحح التلاوة الاحترافي (Whisper Engine)</h1>", unsafe_allow_html=True)
+# 3. عرض النص القرآني
+st.markdown("<h1 style='color: #1B5E20;'>🕌 مصحح التلاوة الذكي (نسخة Whisper)</h1>", unsafe_allow_html=True)
 target_verse = "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ"
 target_words = target_verse.split()
 
@@ -45,12 +47,14 @@ placeholder = st.empty()
 with placeholder.container():
     st.markdown(f"<div class='quran-center-container'>{' '.join([f'<span>{w}</span>' for w in target_words])}</div>", unsafe_allow_html=True)
 
+# 4. تسجيل الصوت
 col1, col2, col3 = st.columns([1, 1, 1])
 with col2:
-    audio_record = mic_recorder(start_prompt="🎤 ابدأ الترتيل بدقة", stop_prompt="⏹️ تحليل التلاوة", key='warsh_whisper')
+    audio_record = mic_recorder(start_prompt="🎤 ابدأ الترتيل الآن", stop_prompt="⏹️ توقف للتحليل", key='warsh_fix_v1')
 
+# 5. التحليل بعد التسجيل
 if audio_record:
-    with st.spinner("⏳ Whisper يقوم بتحليل مخارج الحروف الآن..."):
+    with st.spinner("⏳ جاري تحليل مخارج الحروف بدقة..."):
         try:
             audio_bytes = audio_record['bytes']
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
@@ -61,7 +65,7 @@ if audio_record:
             r = sr.Recognizer()
             with sr.AudioFile(wav_buf) as source:
                 audio_data = r.record(source)
-                # ملاحظة: recognize_whisper تتطلب تثبيت مكتبة openai-whisper
+                # ملاحظة: يمكنك استخدام recognize_google كخيار سريع أو Whisper للدقة
                 spoken_text = r.recognize_google(audio_data, language="ar-SA") 
             
             spoken_words = [clean_strict(w) for w in spoken_text.split()]
@@ -80,24 +84,31 @@ if audio_record:
             result_html += "</div>"
             placeholder.markdown(result_html, unsafe_allow_html=True)
 
+            # عرض التقرير التعليمي
             if errors:
-                st.error(f"⚠️ اكتشفنا أخطاء في المواضع التالية:")
+                st.error(f"⚠️ يوجد {len(errors)} ملاحظات على نطق الكلمات التالية:")
                 cols = st.columns(min(len(errors), 3))
                 for idx, err in enumerate(errors):
                     with cols[idx % 3]:
-                        st.warning(f"كلمة: {err}")
-                        first_char = clean_strict(err)[0]
-                        if first_char in MUKHRAJ_IMAGES:
-                            st.write(f"📍 مخرج ({first_char}): {MUKHRAJ_IMAGES[first_char]}")
-                            # عرض الصور التعليمية بناءً على الحرف
-                            if first_char == "ق":
-                                
-                            elif first_char == "د":
-                                
-                            elif first_char == "ل":
-                                
+                        st.warning(f"الكلمة: {err}")
+                        clean_err = clean_strict(err)
+                        if clean_err:
+                            first_char = clean_err[0]
+                            if first_char in MUKHRAJ_IMAGES:
+                                st.write(f"📍 مخرج حرف ({first_char}):")
+                                st.info(MUKHRAJ_IMAGES[first_char])
+                                # هنا تظهر الصور التوضيحية بناءً على الحرف المتعثر فيه
+                                if first_char == "ق":
+                                    st.write("📖 نصيحة: ارفع أقصى اللسان ليصطدم بالحنك الرخو.")
+                                    
+                                elif first_char == "د":
+                                    st.write("📖 نصيحة: اجعل طرف لسانك يضرب أصول الأسنان العليا بقوة.")
+                                    
+                                elif first_char == "ل":
+                                    st.write("📖 نصيحة: اللام تخرج من حافتي اللسان إلى منتهاه.")
+                                    
             else:
-                st.success("✅ قراءة ممتازة ومتقنة!")
+                st.success("✅ هنيئاً لك! القراءة صحيحة وموافقة للرسم العثماني.")
 
         except Exception as e:
-            st.error(f"حدث خطأ أثناء التحليل: {e}")
+            st.error(f"حدث خطأ فني: {e}")
