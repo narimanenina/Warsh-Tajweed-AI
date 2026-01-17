@@ -23,17 +23,13 @@ st.markdown("""
     }
     .word-correct { color: #2E7D32; font-size: 35px; font-weight: bold; margin: 0 10px; }
     .word-error { color: #D32F2F; font-size: 35px; font-weight: bold; text-decoration: underline; margin: 0 10px; }
-    .instruction-text { color: #555; font-size: 18px; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
-# دالة تنظيف النص (صارمة لورش)
 def clean_strict(text):
-    t = re.sub(r"[\u064B-\u0652]", "", text) # حذف التشكيل
-    # نحافظ على الهمزات لأن ورش يهتم بتحقيقها أو إبدالها
+    t = re.sub(r"[\u064B-\u0652]", "", text) 
     return t.strip()
 
-# قاموس الصور التوضيحية للمخارج
 MUKHRAJ_IMAGES = {
     "ق": "أقصى اللسان مما يلي الحلق مع ما يقابله من الحنك الأعلى",
     "د": "طرف اللسان مع أصول الثنايا العليا",
@@ -41,7 +37,6 @@ MUKHRAJ_IMAGES = {
     "ح": "وسط الحلق"
 }
 
-# الواجهة الرئيسية
 st.markdown("<h1 style='color: #1B5E20;'>🕌 مصحح التلاوة الاحترافي (Whisper Engine)</h1>", unsafe_allow_html=True)
 target_verse = "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ"
 target_words = target_verse.split()
@@ -63,29 +58,20 @@ if audio_record:
             audio.export(wav_buf, format="wav")
             wav_buf.seek(0)
 
-            # استخدام محرك Whisper (يتطلب اتصال بالإنترنت أو مكتبة openai-whisper محلياً)
             r = sr.Recognizer()
             with sr.AudioFile(wav_buf) as source:
                 audio_data = r.record(source)
-                # استخدام Whisper API لضمان أقصى دقة في الحروف
-                spoken_text = r.recognize_whisper(audio_data, language="arabic")
+                # ملاحظة: recognize_whisper تتطلب تثبيت مكتبة openai-whisper
+                spoken_text = r.recognize_google(audio_data, language="ar-SA") 
             
-            spoken_words = spoken_text.split()
+            spoken_words = [clean_strict(w) for w in spoken_text.split()]
             
-            # المقارنة الصارمة
             result_html = "<div class='quran-center-container'>"
             errors = []
             
             for i, target_w in enumerate(target_words):
-                clean_target = clean_strict(target_w)
-                # فحص وجود الكلمة بدقة عالية جداً
-                found = False
-                for sw in spoken_words:
-                    if clean_target == clean_strict(sw):
-                        found = True
-                        break
-                
-                if found:
+                c_target = clean_strict(target_w)
+                if c_target in spoken_words:
                     result_html += f"<span class='word-correct'>{target_w}</span>"
                 else:
                     result_html += f"<span class='word-error'>{target_w}</span>"
@@ -94,26 +80,24 @@ if audio_record:
             result_html += "</div>"
             placeholder.markdown(result_html, unsafe_allow_html=True)
 
-            # التقرير التفصيلي
-            st.divider()
-            if not errors:
-                st.success("✅ هنيئاً لك! التلاوة صحيحة تماماً وفقاً لمحرك Whisper.")
-            else:
-                st.error(f"⚠️ اكتشفنا {len(errors)} مواضع تحتاج لتصحيح.")
-                cols = st.columns(len(errors) if len(errors) < 4 else 3)
+            if errors:
+                st.error(f"⚠️ اكتشفنا أخطاء في المواضع التالية:")
+                cols = st.columns(min(len(errors), 3))
                 for idx, err in enumerate(errors):
                     with cols[idx % 3]:
-                        st.warning(f"خطأ في: {err}")
-                        # عرض صورة المخرج إذا كان الحرف مسجلاً
+                        st.warning(f"كلمة: {err}")
                         first_char = clean_strict(err)[0]
                         if first_char in MUKHRAJ_IMAGES:
-                            st.write(f"💡 مخرج حرف ({first_char}): {MUKHRAJ_IMAGES[first_char]}")
+                            st.write(f"📍 مخرج ({first_char}): {MUKHRAJ_IMAGES[first_char]}")
+                            # عرض الصور التعليمية بناءً على الحرف
                             if first_char == "ق":
                                 
                             elif first_char == "د":
                                 
                             elif first_char == "ل":
                                 
+            else:
+                st.success("✅ قراءة ممتازة ومتقنة!")
 
         except Exception as e:
-            st.error("يرجى المحاولة مرة أخرى بوضوح أعلى.")
+            st.error(f"حدث خطأ أثناء التحليل: {e}")
