@@ -10,8 +10,8 @@ import re
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
-# --- 1. إعدادات الواجهة الاحترافية ---
-st.set_page_config(page_title="مقرأة ورش الشاملة", layout="centered", page_icon="🕌")
+# --- 1. إعدادات الواجهة ---
+st.set_page_config(page_title="مقرأة ورش الذكية", layout="centered", page_icon="🕌")
 
 st.markdown("""
     <style>
@@ -19,117 +19,117 @@ st.markdown("""
     html, body, [class*="st-"] { 
         font-family: 'Amiri', serif; direction: rtl; text-align: right; 
     }
-    .st-emotion-cache-p4m61c { flex-direction: row-reverse !important; }
+    .word-correct { color: #2E7D32; font-size: 24px; font-weight: bold; margin: 5px; }
+    .word-error { color: #D32F2F; font-size: 24px; font-weight: bold; text-decoration: underline; margin: 5px; }
     .quran-container {
-        background-color: #fcfdfc; padding: 25px; border-radius: 15px;
-        border-right: 10px solid #2E7D32; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        background-color: #f9f9f9; padding: 30px; border-radius: 20px;
+        border: 2px solid #e0e0e0; text-align: center; line-height: 2.5;
     }
-    .stButton>button { 
-        background-color: #2E7D32; color: white; border-radius: 10px; 
-        width: 100%; height: 3.5em; font-size: 18px;
+    .feedback-box {
+        background-color: #e8f5e9; padding: 15px; border-radius: 10px; border-right: 5px solid #2E7D32;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. محرك البحث عن الأحكام (خلف الكواليس) ---
-@st.cache_data
-def load_warsh_data():
-    if os.path.exists('arabic_phonetics.csv'):
-        return pd.read_csv('arabic_phonetics.csv', encoding='utf-8-sig')
-    return None
+# --- 2. بيانات أحكام ورش (افتراضية للمثال) ---
+def get_warsh_rules(word):
+    rules = {
+        "أحد": "قلقلة كبرى في الدال عند الوقف.",
+        "الصمد": "تغليظ اللام (عند البعض) وقلقلة الدال.",
+        "يولد": "قلقلة الدال ساكنة.",
+        "كفوا": "لورش فيها إبدال الهمزة واواً (كُفُواً) ونقل الحركة.",
+    }
+    return rules.get(word, "تأكد من مخارج الحروف وصفاتها.")
 
-df_rules = load_warsh_data()
-
-def get_tajweed_feedback(word):
-    """تحليل الكلمة وربطها بالأحكام والمخارج بناءً على ملف CSV"""
-    feedback = []
-    if df_rules is not None:
-        clean_word = re.sub(r"[\u064B-\u0652]", "", word)
-        for char in clean_word:
-            match = df_rules[df_rules['letter'] == char]
-            if not match.empty:
-                row = match.iloc[0]
-                feedback.append({
-                    'الحرف': row['letter'],
-                    'الحكم': row['rule_category'],
-                    'المخرج': row['place'],
-                    'الصفة': row['emphasis']
-                })
-    return feedback
-
-# --- 3. وظيفة معالجة وتحويل الصوت ---
-def process_audio_v14(audio_bytes):
-    # استخدام pydub لضمان تحويل أي تنسيق إلى WAV PCM صالح للتحليل
+# --- 3. معالجة الصوت ---
+def process_audio(audio_bytes):
     audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
     wav_buf = io.BytesIO()
     audio.export(wav_buf, format="wav")
     wav_buf.seek(0)
     
-    # تحليل زمن الصوت (للمد المشبع 6 حركات)
     y, sr_rate = librosa.load(wav_buf)
     rms = librosa.feature.rms(y=y)[0]
-    threshold = np.max(rms) * 0.25
-    mad_duration = np.sum(rms > threshold) * (512 / sr_rate)
+    duration = np.sum(rms > (np.max(rms)*0.2)) * (512/sr_rate)
     
     wav_buf.seek(0)
-    return round(mad_duration, 2), wav_buf
+    return duration, wav_buf
 
 # --- 4. واجهة المستخدم ---
-st.markdown("<h1 style='text-align: center; color: #1B5E20;'>🕌 مصحح تلاوة ورش الشامل</h1>", unsafe_allow_html=True)
-st.write("<p style='text-align: center;'>تصحيح المخارج، القلقلة، الغنة، وأحكام المد</p>", unsafe_allow_html=True)
+st.title("🕌 مصحح التلاوة التفاعلي (رواية ورش)")
+st.write("اقرأ الآية بتمهل ليقوم النظام بتحليل نطقك وأحكامك.")
 
-
+# آية التجربة
+target_verse = "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ"
 
 with st.sidebar:
-    st.header("⚙️ الضبط")
-    target_text = st.text_area("الآية المستهدفة:", "إنا أعطيناك الكوثر")
-    st.info("💡 يتم استخدام ملف CSV كمرجع للأحكام في الخلفية.")
+    st.header("📖 آية التجربة")
+    st.info(target_verse)
 
-audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة بالترتيل", stop_prompt="⏹️ توقف واطلب التصحيح", key='warsh_v14')
+audio_record = mic_recorder(start_prompt="🎤 ابدأ التلاوة الآن", stop_prompt="⏹️ توقف للحصول على النتيجة", key='warsh_final')
 
 if audio_record:
     audio_bytes = audio_record['bytes']
     
-    with st.spinner("⏳ جاري تحليل الأحكام والمخارج..."):
+    with st.spinner("⏳ جاري تحليل تلاوتك..."):
         try:
-            # 1. المعالجة والتحويل
-            mad_time, wav_buffer = process_audio_v14(audio_bytes)
-            
-            # 2. التعرف على النص عبر جوجل
+            # معالجة الصوت والتعرف على النص
+            duration, wav_buffer = process_audio(audio_bytes)
             r = sr.Recognizer()
             with sr.AudioFile(wav_buffer) as source:
-                r.adjust_for_ambient_noise(source)
                 audio_recorded = r.record(source)
                 spoken_text = r.recognize_google(audio_recorded, language="ar-SA")
-            
-            # 3. المقارنة اللفظية الذكية
-            norm_target = re.sub(r"[إأآا]", "ا", target_text)
-            norm_spoken = re.sub(r"[إأآا]", "ا", spoken_text)
-            accuracy = round(difflib.SequenceMatcher(None, norm_target.split(), norm_spoken.split()).ratio() * 100, 1)
 
-            # --- عرض التقرير النهائي ---
-            st.markdown("<div class='quran-container'>", unsafe_allow_html=True)
-            st.subheader(f"نسبة الإتقان: {accuracy}%")
-            st.write(f"**المنطوق:** {spoken_text}")
+            # تنظيف النصوص للمقارنة
+            def clean(text):
+                t = re.sub(r"[\u064B-\u0652]", "", text) # حذف التشكيل
+                return t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+
+            target_words = target_verse.split()
+            spoken_words = spoken_text.split()
             
+            # --- عرض النتيجة بالتلوين ---
+            st.subheader("📊 تحليل النطق المباشر:")
+            result_html = "<div class='quran-container'>"
+            
+            errors_found = []
+            for i, word in enumerate(target_words):
+                clean_target = clean(word)
+                # بحث بسيط عن الكلمة في النص المنطوق
+                if any(clean_target in clean(sw) for sw in spoken_words):
+                    result_html += f"<span class='word-correct'>{word}</span> "
+                else:
+                    result_html += f"<span class='word-error'>{word}</span> "
+                    errors_found.append(word)
+            
+            result_html += "</div>"
+            st.markdown(result_html, unsafe_allow_html=True)
+
+            # --- ملاحظات أحكام التلاوة ---
             st.divider()
-            st.markdown("### 📋 التحليل التفصيلي لجميع الأحكام:")
+            st.subheader("📝 ملاحظات التجويد (رواية ورش):")
             
-            words = target_text.split()
-            for word in words:
-                tajweed_data = get_tajweed_feedback(word)
-                if tajweed_data:
-                    # expander مع منع تداخل الكتابة مع الأيقونة
-                    with st.expander(f"📖 أحكام ومخارج كلمة: {word}"):
-                        st.dataframe(pd.DataFrame(tajweed_data), use_container_width=True, hide_index=True)
+            col1, col2 = st.columns(2)
             
-            # تقييم زمن المد لورش
-            if mad_time < 3.0:
-                st.warning(f"⚠️ تنبيه تجويدي: زمن المد ({mad_time} ث) قصير. تذكر إشباع المد لـ 6 حركات.")
+            with col1:
+                st.metric("زمن التلاوة", f"{round(duration, 1)} ثانية")
+                if duration < 5:
+                    st.warning("⚠️ القراءة سريعة نوعاً ما، حاول الترتيل ببطء لتحقيق أحكام المد.")
+            
+            with col2:
+                accuracy = round(difflib.SequenceMatcher(None, clean(target_verse), clean(spoken_text)).ratio() * 100)
+                st.metric("نسبة الإتقان اللفظي", f"{accuracy}%")
+
+            if errors_found:
+                st.error("⚠️ توجد كلمات لم يتم التعرف عليها بشكل صحيح. قد يكون السبب مخارج الحروف أو سرعة القراءة.")
+                for err in errors_found:
+                    with st.expander(f"كيفية تصحيح: {err}"):
+                        st.write(f"**الحكم:** {get_warsh_rules(err)}")
+                        st.write("**نصيحة:** تأكد من تحقيق مخرج الحرف بوضوح، وإذا كان هناك نقل أو إبدال كما في 'كفواً'، فالتزم بمرتبة الأداء لورش.")
             else:
-                st.success(f"✅ إتقان ممتاز! زمن المد ({mad_time} ث) يتوافق مع رواية ورش.")
-            
-            st.markdown("</div>", unsafe_allow_html=True)
+                st.success("✅ أحسنت! النطق اللفظي سليم جداً وفقاً للتحليل الأولي.")
+
+            st.info("💡 **نصيحة للقراءة:** رواية ورش تمتاز بمد البدل (4-6 حركات) وتغليظ اللامات، حاول إظهار هذه الصفات في تسجيلك القادم.")
 
         except Exception as e:
-            st.error(f"⚠️ تعذر التحليل: يرجى القراءة بوضوح أو التأكد من إعدادات الميكروفون. (السبب: {e})")
+            st.error("لم نتمكن من تحليل الصوت بدقة. يرجى محاولة القراءة بصوت أعلى وأوضح.")
