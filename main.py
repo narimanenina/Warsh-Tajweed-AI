@@ -6,95 +6,75 @@ import re
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
-# --- 1. إعدادات الحالة والذاكرة ---
-if 'user_points' not in st.session_state: st.session_state.user_points = 0
+# --- 1. إعدادات الحالة والواجهة ---
+if 'is_testing' not in st.session_state: st.session_state.is_testing = False
+if 'spoken_text' not in st.session_state: st.session_state.spoken_text = ""
 
-st.set_page_config(page_title="مقرأة ورش - تتبع الكلمات", layout="wide")
+st.set_page_config(page_title="مقرأة ورش الذكية - Tarteel Clone", layout="wide")
 
-# --- 2. التنسيق الجمالي (CSS) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap');
     html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: center; }
     
-    .quran-frame {
-        background-color: #fffcf2; padding: 40px; border-radius: 25px;
-        border: 10px double #2E7D32; margin: 20px auto; max-width: 900px; line-height: 2.8;
+    .quran-container {
+        background-color: #ffffff; padding: 40px; border-radius: 20px;
+        border: 2px solid #2E7D32; box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+        margin: 20px auto; max-width: 800px; line-height: 3;
     }
-    /* تنسيق الكلمات أثناء التتبع */
-    .word-normal { font-family: 'Amiri Quran', serif; font-size: 45px; color: #3e2723; margin: 0 8px; opacity: 0.2; transition: all 0.4s; }
-    .word-active { font-family: 'Amiri Quran', serif; font-size: 52px; color: #D32F2F; font-weight: bold; opacity: 1; transform: scale(1.1); }
-    .aya-num { color: #2E7D32; font-size: 25px; font-weight: bold; }
-    
-    .points-display { background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%); padding: 10px 25px; border-radius: 50px; color: white; font-size: 22px; font-weight: bold; }
+    .word-highlight { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; font-weight: bold; border-bottom: 3px solid #2E7D32; }
+    .word-hidden { background-color: #eee; color: #eee; border-radius: 5px; font-size: 45px; margin: 0 5px; cursor: pointer; }
+    .word-normal { font-family: 'Amiri Quran', serif; font-size: 45px; color: #3e2723; margin: 0 5px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. بيانات السورة والمخارج (بناءً على ص 19 من الكتاب) ---
-#
-SURAH_WORDS = [
-    {"text": "إِنَّآ", "makhraj": "الجوف (للمد)", "tip": "مد مشبع 6 حركات لورش", "duration": 1.5},
-    {"text": "أَعْطَيْنَٰكَ", "makhraj": "وسط الحلق (للعين)", "tip": "تحقيق مخرج العين الساكنة", "duration": 1.2},
-    {"text": "اَ۬لْكَوْثَرَ", "makhraj": "طرف اللسان (للثاء)", "tip": "إخراج طرف اللسان مع الثنايا", "duration": 1.2},
-    {"text": "(1)", "makhraj": None, "tip": None, "duration": 0.5},
-    {"text": "فَصَلِّ", "makhraj": "طرف اللسان (للام)", "tip": "ترقيق اللام وصلاً", "duration": 1.0},
-    {"text": "لِرَبِّكَ", "makhraj": "طرف اللسان (للراء)", "tip": "ترقيق الراء لورش", "duration": 1.0},
-    {"text": "وَانْحَرْۖ", "makhraj": "وسط الحلق (للُّحاء)", "tip": "إظهار النون عند الحاء", "duration": 1.2},
-    {"text": "(2)", "makhraj": None, "tip": None, "duration": 0.5},
-    {"text": "إِنَّ", "makhraj": "الخيشوم (للغنة)", "tip": "غنة أكمل ما تكون حركتين", "duration": 1.0},
-    {"text": "شَانِئَكَ", "makhraj": "وسط اللسان (للشين)", "tip": "تفشي الشين بوضوح", "duration": 1.0},
-    {"text": "هُوَ", "makhraj": "أقصى الحلق (للهاء)", "tip": "إخراج الهاء من مخرجها", "duration": 0.8},
-    {"text": "اَ۬لَابْتَرُۖ", "makhraj": "الشفتان (للباء)", "tip": "حكم النقل (لَبْتَرُ) وقلقلة الباء", "duration": 1.5},
-    {"text": "(3)", "makhraj": None, "tip": None, "duration": 0.5}
-]
+# --- 2. البيانات (سورة الكوثر برواية ورش) ---
+surah_words = ["إِنَّآ", "أَعْطَيْنَٰكَ", "اَ۬لْكَوْثَرَ", "فَصَلِّ", "لِرَبِّكَ", "وَانْحَرْۖ", "إِنَّ", "شَانِئَكَ", "هُوَ", "اَ۬لَابْتَرُۖ"]
 
 def clean_text(text):
-    t = re.sub(r"[\u064B-\u0652\u0670\u0653\u0654\u0655]", "", text)
-    return t.strip()
+    return re.sub(r"[\u064B-\u0652\u0670\u0653\u0654\u0655]", "", text).strip()
 
-# --- 4. واجهة المستخدم ---
-c1, c2 = st.columns([3, 1])
+# --- 3. تصميم واجهة "ترتيل" ---
+st.title("🕌 تطبيق ترتيل - رواية ورش")
+st.write("استخدم الميكروفون للبدء في التلاوة وسيقوم التطبيق بتتبع كلماتك.")
+
+# تبديل وضع "الاختبار" (إخفاء الآيات)
+c1, c2 = st.columns(2)
 with c1:
-    st.title("🕌 مصحح ورش: نظام تتبع الكلمات")
+    if st.button("👁️ عرض الآيات"): st.session_state.is_testing = False
 with c2:
-    st.markdown(f"<div class='points-display'>🌟 النقاط: {st.session_state.user_points}</div>", unsafe_allow_html=True)
+    if st.button("🙈 وضع الاختبار (إخفاء)"): st.session_state.is_testing = True
 
-# حاوية العرض المتغيرة
-quran_area = st.empty()
+# عرض المصحف
+display_html = "<div class='quran-container'>"
+spoken_words = st.session_state.spoken_text.split()
 
-# دالة لعرض الكلمات مع تمييز الكلمة الحالية
-def display_quran(active_index=-1):
-    html = "<div class='quran-frame'>"
-    for idx, item in enumerate(SURAH_WORDS):
-        if "(" in item['text']:
-            html += f"<span class='aya-num'>{item['text']}</span> "
-        elif idx == active_index:
-            html += f"<span class='word-active'>{item['text']}</span> "
+for w in surah_words:
+    clean_w = clean_text(w)
+    if st.session_state.is_testing:
+        # في وضع الاختبار، الكلمة تظهر فقط إذا نطقها المستخدم صح
+        if clean_w in spoken_words:
+            display_html += f"<span class='word-normal'>{w}</span> "
         else:
-            html += f"<span class='word-normal'>{item['text']}</span> "
-    html += "</div>"
-    quran_area.markdown(html, unsafe_allow_html=True)
+            display_html += f"<span class='word-hidden'>&nbsp;&nbsp;{w}&nbsp;&nbsp;</span> "
+    else:
+        # في الوضع العادي، يتم تلوين الكلمة المنطوقة حالياً
+        if clean_w in spoken_words:
+            display_html += f"<span class='word-highlight'>{w}</span> "
+        else:
+            display_html += f"<span class='word-normal'>{w}</span> "
+display_html += "</div>"
 
-# العرض الأولي
-display_quran()
+st.markdown(display_html, unsafe_allow_html=True)
 
 st.divider()
 
-# --- 5. منطق التشغيل والتحليل ---
-col_play, col_record = st.columns(2)
-
-with col_play:
-    if st.button("▶️ ابدأ تتبع الكلمات (محاكاة)"):
-        for i in range(len(SURAH_WORDS)):
-            display_quran(i)
-            time.sleep(SURAH_WORDS[i]['duration'])
-        display_quran() # إعادة العرض للحالة الطبيعية
-
-with col_record:
-    audio = mic_recorder(start_prompt="🎤 سجل تلاوتك للمطابقة", stop_prompt="⏹️ إنهاء التقييم", key='tracking_mic')
+# --- 4. محرك التعرف الصوتي (Tarteel Engine) ---
+st.subheader("🎤 ابدأ التلاوة")
+audio = mic_recorder(start_prompt="اضغط للتلاوة", stop_prompt="توقف للتحليل", key='tarteel_mic')
 
 if audio:
-    with st.spinner("⏳ جاري تحليل مخارج الحروف..."):
+    with st.spinner("⏳ جاري التعرف على تلاوتك..."):
         try:
             raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes'])).normalize()
             wav_io = io.BytesIO()
@@ -103,22 +83,19 @@ if audio:
             
             r = sr.Recognizer()
             with sr.AudioFile(wav_io) as source:
-                r.adjust_for_ambient_noise(source, duration=0.3)
+                r.adjust_for_ambient_noise(source)
                 audio_data = r.record(source)
-                spoken = r.recognize_google(audio_data, language="ar-SA")
-            
-            # محاكاة التتبع بناءً على ما تم التعرف عليه
-            st.success("تم التعرف على تلاوتك!")
-            st.session_state.user_points += 50
-            st.balloons()
-            
-            # عرض نصيحة المخرج بناءً على الصفحة 19
-            #
-            st.info("📍 توجيهات مخارج الحروف لآية الكوثر:")
-            st.markdown("""
-            * **العين (وسط الحلق):** تأكد من ضغط وسط الحلق. 
-            * **الباء (الشفتان):** انتبه للقلقلة في كلمة 'الابتر'. 
-            """)
-            
+                # استخدام محرك جوجل للتعرف على الكلام (يدعم العربية بوضوح)
+                text = r.recognize_google(audio_data, language="ar-SA")
+                st.session_state.spoken_text = clean_text(text)
+                st.rerun() # تحديث الواجهة فوراً لتلوين الكلمات
+                
         except Exception as e:
-            st.error("يرجى المحاولة مرة أخرى بوضوح.")
+            st.warning("يرجى القراءة بوضوح. تأكد من اتصال الإنترنت.")
+
+# --- 5. ميزات إضافية (من الفيديو) ---
+with st.sidebar:
+    st.header("⚙️ الإعدادات")
+    st.selectbox("اختر القارئ للمحاكاة:", ["بلال عيناوي (ورش)", "الحصري (ورش)"])
+    st.slider("سرعة التتبع:", 0.5, 2.0, 1.0)
+    st.checkbox("تنبيه عند الخطأ في الحكم")
