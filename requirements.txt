@@ -1,7 +1,8 @@
-numpy==1.23.5
-librosa
 streamlit
 SpeechRecognition
+librosa
+numpy
+pandas
 pydub
 matplotlib
 fpdf2
