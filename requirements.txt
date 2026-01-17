@@ -7,3 +7,4 @@ soundfile
 pydub
 fastdtw
 scipy
+streamlit-mic-recorder
