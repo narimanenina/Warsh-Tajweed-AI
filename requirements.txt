@@ -1,10 +1,8 @@
 streamlit
-pandas
-SpeechRecognition
+speech_recognition
 librosa
 numpy
-soundfile
+pandas
 pydub
-fastdtw
-scipy
-streamlit-mic-recorder
+matplotlib
+fpdf2
