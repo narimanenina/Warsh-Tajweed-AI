@@ -14,138 +14,90 @@ from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 from fpdf import FPDF
 
-# --- 1. إعدادات الواجهة والذاكرة ---
-st.set_page_config(page_title="مقرأة ورش الاحترافية", layout="wide", page_icon="🕌")
+# --- 1. إعدادات الواجهة ---
+st.set_page_config(page_title="مقرأة ورش الذكية", layout="wide")
 
+# منع اختفاء الواجهة باستخدام حاويات ثابتة
 if 'history' not in st.session_state: st.session_state.history = []
-if 'high_scores' not in st.session_state: st.session_state.high_scores = {}
-if 'daily_seed' not in st.session_state: st.session_state.daily_seed = datetime.date.today().strftime("%Y%m%d")
 
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Amiri&display=swap');
     html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: center; }
     .quran-container {
-        background-color: #ffffff; padding: 35px; border-radius: 25px;
-        border: 2px solid #2E7D32; margin: 20px auto; max-width: 950px;
-        display: flex; flex-wrap: wrap; justify-content: center; gap: 15px;
+        background-color: #ffffff; padding: 30px; border-radius: 20px;
+        border: 2px solid #2E7D32; margin: 20px auto; display: flex; 
+        flex-wrap: wrap; justify-content: center; gap: 15px;
     }
-    .word-correct { color: #2E7D32; font-size: 38px; font-weight: bold; }
-    .word-error { color: #D32F2F; font-size: 38px; font-weight: bold; text-decoration: underline; }
-    .word-pending { color: #444444; font-size: 38px; }
-    .challenge-box { background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); padding: 20px; border-radius: 15px; border-right: 8px solid #2E7D32; margin-bottom: 25px; }
+    .word-correct { color: #2E7D32; font-size: 35px; font-weight: bold; }
+    .word-error { color: #D32F2F; font-size: 35px; font-weight: bold; text-decoration: underline; }
+    .word-pending { color: #444444; font-size: 35px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. البيانات والوظائف المساعدة ---
+# --- 2. البيانات ---
 surahs = {
     "سورة الكوثر": "إِنَّا أَعْطَيْنَاكَ الْكَوْثَرَ فَصَلِّ لِرَبِّكَ وَانْحَرْ إِنَّ شَانِئَكَ هُوَ الْأَبْتَرُ",
-    "سورة الإخلاص": "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ",
-    "سورة الفاتحة": "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ"
+    "سورة الإخلاص": "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ"
 }
 
-def clean_text(text): 
+def clean_text(text):
     return re.sub(r"[\u064B-\u0652]", "", text).strip()
 
-def generate_cert(user_name, surah, acc):
-    pdf = FPDF(orientation='L', unit='mm', format='A4')
-    pdf.add_page()
-    pdf.rect(10, 10, 277, 190)
-    pdf.set_font("Arial", 'B', 30)
-    pdf.cell(0, 50, "Certificate of Recitation Mastery", ln=True, align='C')
-    pdf.set_font("Arial", '', 20)
-    pdf.cell(0, 20, f"This certifies that {user_name}", ln=True, align='C')
-    pdf.cell(0, 20, f"Mastered {surah} with {acc}% Accuracy", ln=True, align='C')
-    pdf.cell(0, 30, f"Date: {datetime.date.today()}", ln=True, align='C')
-    return pdf.output(dest='S')
+# --- 3. العرض الرئيسي ---
+st.title("🕌 مصحح التلاوة التفاعلي")
 
-# --- 3. تصميم واجهة التبويبات ---
-st.title("🕌 منصة ورش التعليمية الذكية")
-tab1, tab2, tab3 = st.tabs(["🎯 الاختبار والتحدي", "🔬 المختبر الترددي", "📈 الإحصائيات"])
+tab1, tab2 = st.tabs(["🎯 الاختبار", "📊 السجل"])
 
 with tab1:
-    random.seed(st.session_state.daily_seed)
-    daily_s = random.choice(list(surahs.keys()))
-    st.markdown(f"<div class='challenge-box'><h3>🎯 تحدي اليوم: {daily_s}</h3></div>", unsafe_allow_html=True)
-    
-    selected_s = st.selectbox("اختر سورة للاختبار:", list(surahs.keys()))
+    selected_s = st.selectbox("اختر السورة:", list(surahs.keys()))
     target_v = surahs[selected_s]
     target_w = target_v.split()
     
-    placeholder = st.empty()
-    placeholder.markdown(f"<div class='quran-container'>{' '.join([f'<span class=word-pending>{w}</span>' for w in target_w])}</div>", unsafe_allow_html=True)
+    # حاوية عرض الكلمات
+    words_area = st.empty()
+    words_area.markdown(f"<div class='quran-container'>{' '.join([f'<span class=word-pending>{w}</span>' for w in target_w])}</div>", unsafe_allow_html=True)
     
-    audio = mic_recorder(start_prompt="🎤 ابدأ الترتيل", stop_prompt="⏹️ توقف للتحليل", key='main_recorder')
+    # زر التسجيل
+    audio = mic_recorder(start_prompt="🎤 ابدأ التسجيل", stop_prompt="⏹️ توقف للتحليل", key='recorder_v1')
 
     if audio:
-        with st.spinner("⏳ جاري تحسين جودة الصوت وتحليل تلاوتك..."):
-            try:
-                # تحويل الصوت وتطبيعه (Normalization) لزيادة الوضوح
-                raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes']))
-                raw_audio = raw_audio.normalize() 
+        try:
+            with st.spinner("⏳ جاري المعالجة..."):
+                # تحويل الصوت بصيغة WAV مبسطة جداً
+                audio_data = AudioSegment.from_file(io.BytesIO(audio['bytes']))
+                audio_data = audio_data.normalize()
                 
-                duration = len(raw_audio) / 1000.0
-                
-                # تصدير بصيغة WAV قياسية متوافقة تماماً مع SpeechRecognition
-                wav_io = io.BytesIO()
-                raw_audio.export(wav_io, format="wav", parameters=["-acodec", "pcm_s16le", "-ac", "1", "-ar", "16000"])
-                wav_io.seek(0)
+                wav_buffer = io.BytesIO()
+                audio_data.export(wav_buffer, format="wav")
+                wav_buffer.seek(0)
                 
                 r = sr.Recognizer()
-                with sr.AudioFile(wav_io) as source:
-                    r.adjust_for_ambient_noise(source, duration=0.3)
-                    audio_data = r.record(source)
-                    spoken = r.recognize_google(audio_data, language="ar-SA")
+                with sr.AudioFile(wav_buffer) as source:
+                    r.adjust_for_ambient_noise(source)
+                    audio_recorded = r.record(source)
+                    # استخدام التعرف على الكلام من جوجل
+                    spoken_text = r.recognize_google(audio_recorded, language="ar-SA")
                 
-                spoken_w = [clean_text(w) for w in spoken.split()]
+                spoken_words = [clean_text(w) for w in spoken_text.split()]
                 
+                # تحديث الواجهة بالنتائج
                 res_html = "<div class='quran-container'>"
-                correct = 0
+                correct_count = 0
                 for w in target_w:
-                    if clean_text(w) in spoken_w:
+                    if clean_text(w) in spoken_words:
                         res_html += f"<span class='word-correct'>{w}</span> "
-                        correct += 1
+                        correct_count += 1
                     else:
                         res_html += f"<span class='word-error'>{w}</span> "
                 res_html += "</div>"
-                placeholder.markdown(res_html, unsafe_allow_html=True)
+                words_area.markdown(res_html, unsafe_allow_html=True)
                 
-                acc = (correct / len(target_w)) * 100
-                wpm = (correct / duration) * 60 if duration > 0 else 0
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric("🎯 الدقة", f"{round(acc)}%")
-                c2.metric("⏱️ الزمن", f"{round(duration, 1)} ث")
-                c3.metric("🚀 الطلاقة", f"{round(wpm)} كلمة/د")
-                
-                st.session_state.history.append({"سورة": selected_s, "دقة": acc, "سرعة": wpm})
-                
-                if acc >= 90:
-                    st.success("🏆 إتقان مذهل!")
-                    u_name = st.text_input("اسمك للشهادة:", "هاني معمري")
-                    if st.button("📄 إصدار الشهادة"):
-                        pdf_data = generate_cert(u_name, selected_s, round(acc))
-                        st.download_button("تحميل الشهادة", pdf_data, f"Cert_{selected_s}.pdf", "application/pdf")
-            except sr.UnknownValueError:
-                st.error("⚠️ لم يتمكن المحرك من تمييز الكلمات. حاول القراءة ببطء ووضوح أكثر.")
-            except Exception as e:
-                st.error(f"⚠️ حدث خطأ أثناء التحليل: {e}")
+                st.success(f"تم تحليل التلاوة بنجاح! نسبة الإتقان: {round((correct_count/len(target_w))*100)}%")
+
+        except Exception as e:
+            st.error(f"حدث خطأ في التحليل: يرجى التأكد من نطق الكلمات بوضوح.")
+            st.info("نصيحة: سجل في مكان هادئ واستخدم متصفح كروم.")
 
 with tab2:
-    st.subheader("🔬 تحليل مخارج الحروف (بصمة الصوت)")
-    test_char = st.selectbox("اختر حرفاً للتحليل:", ["ق", "د", "س", "ر"])
-    q_audio = mic_recorder(start_prompt=f"انطق حرف ({test_char})", stop_prompt="تحليل", key='q_mic')
-    if q_audio:
-        y, sr_rate = librosa.load(io.BytesIO(q_audio['bytes']), sr=22050)
-        fig, ax = plt.subplots()
-        S = librosa.feature.melspectrogram(y=y, sr=sr_rate)
-        librosa.display.specshow(librosa.power_to_db(S, ref=np.max), ax=ax, y_axis='mel', x_axis='time')
-        st.pyplot(fig)
-
-with tab3:
-    st.subheader("📈 سجل الأداء")
-    if st.session_state.history:
-        df_hist = pd.DataFrame(st.session_state.history)
-        st.line_chart(df_hist['دقة'])
-        st.table(df_hist)
-    else: st.write("لا توجد بيانات مسجلة حالياً.")
+    st.write("سيظهر سجل تلاواتك هنا قريباً.")
