@@ -1,8 +1,7 @@
-streamlit
-speech_recognition
+numpy==1.23.5
 librosa
-numpy
-pandas
+streamlit
+SpeechRecognition
 pydub
 matplotlib
 fpdf2
