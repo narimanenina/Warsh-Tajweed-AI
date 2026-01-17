@@ -6,13 +6,12 @@ from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
 # --- 1. إعدادات الحالة والواجهة ---
-# التأكد من تعريف الحالات الضرورية عند بدء التشغيل
 if 'recognized_words' not in st.session_state:
     st.session_state.recognized_words = []
 if 'is_hidden' not in st.session_state:
     st.session_state.is_hidden = False
 
-st.set_page_config(page_title="مقرأة ورش - تتبع حي", layout="wide")
+st.set_page_config(page_title="مقرأة ورش - تتبع وإخفاء", layout="wide")
 
 st.markdown("""
     <style>
@@ -24,12 +23,12 @@ st.markdown("""
         border: 10px double #2E7D32; margin: 20px auto; max-width: 900px; line-height: 2.8;
     }
     .word-visible { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; font-weight: bold; }
-    .word-hidden { font-family: 'Amiri Quran', serif; font-size: 45px; color: #eee; opacity: 0.1; }
+    .word-faded { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; opacity: 0.2; }
     .word-test { background-color: #ddd; color: #ddd; border-radius: 8px; font-size: 45px; margin: 0 5px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. البيانات (سورة الكوثر برواية ورش) ---
+# --- 2. البيانات (رواية ورش) ---
 surah_data = [
     {"text": "إِنَّآ", "clean": "انا"},
     {"text": "أَعْطَيْنَٰكَ", "clean": "اعطيناك"},
@@ -48,45 +47,45 @@ def clean_text(text):
     t = t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     return t.strip()
 
-# --- 3. أزرار التحكم (مع تفعيل التحديث الفوري) ---
+# --- 3. أزرار التحكم ---
 st.title("🕌 تطبيق ترتيل ورش: تتبع وإخفاء")
 
 col1, col2 = st.columns(2)
 with col1:
     if st.button("👁️ إظهار السورة كاملة"):
         st.session_state.is_hidden = False
-        st.rerun() # إجبار التطبيق على إعادة التحميل لإظهار الكلمات
+        st.rerun()
 with col2:
     if st.button("🙈 وضع الاختبار (إخفاء)"):
         st.session_state.is_hidden = True
         st.rerun()
 
 # --- 4. عرض السورة التفاعلي ---
-# تم تعديل المنطق هنا لضمان الأولوية لحالة الزر
 html = "<div class='quran-container'>"
 for item in surah_data:
-    # 1. إذا نُطقت الكلمة صحيحة تظهر دائماً بلون أخضر
+    # الكلمة تظهر بلون أخضر غامق إذا نطقها المستخدم صح
     if item['clean'] in st.session_state.recognized_words:
         html += f"<span class='word-visible'>{item['text']}</span> "
-    # 2. إذا لم تُنطق وكان وضع الإخفاء (الاختبار) مفعلاً
+    # إذا كان وضع الإخفاء مفعلاً والكلمة لم تُنطق بعد
     elif st.session_state.is_hidden:
         html += f"<span class='word-test'>&nbsp;{item['text']}&nbsp;</span> "
-    # 3. إذا كان وضع الإظهار مفعلاً (تظهر الكلمات بشكل باهت بانتظار نطقها)
+    # إذا كان وضع الإظهار مفعلاً تظهر الكلمة باهتة بانتظار نطقها
     else:
-        html += f"<span class='word-visible' style='opacity: 0.3;'>{item['text']}</span> "
+        html += f"<span class='word-faded'>{item['text']}</span> "
 html += "</div>"
 
 st.markdown(html, unsafe_allow_html=True)
 
 st.divider()
 
-# --- 5. التسجيل ومعالجة الصوت ---
+# --- 5. التسجيل والمعالجة بناءً على صفحة 19 من الكتاب ---
 st.subheader("🎤 ابدأ التلاوة ليظهر النص")
-audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="توقف لإظهار الكلمات", key='tarteel_live_final')
+audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="توقف لإظهار الكلمات", key='tarteel_fix')
 
 if audio:
     with st.spinner("⏳ جاري تحليل تلاوتك..."):
         try:
+            # معالجة الصوت باستخدام pydub
             raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes'])).normalize()
             wav_io = io.BytesIO()
             raw_audio.export(wav_io, format="wav")
@@ -94,15 +93,27 @@ if audio:
             
             r = sr.Recognizer()
             with sr.AudioFile(wav_io) as source:
-                r.adjust_for_ambient_noise(source)
+                r.adjust_for_ambient_noise(source, duration=0.3)
                 audio_data = r.record(source)
                 text = r.recognize_google(audio_data, language="ar-SA")
                 
+                # تحليل الكلمات المنطوقة
                 new_words = [clean_text(w) for w in text.split()]
                 for nw in new_words:
                     if nw not in st.session_state.recognized_words:
                         st.session_state.recognized_words.append(nw)
                 
                 st.rerun()
+        except sr.UnknownValueError:
+            st.error("لم يتم التعرف على الصوت، يرجى القراءة بوضوح.")
+        except Exception as e:
+            st.error(f"حدث خطأ فني: {e}")
 
-        except
+if st.button("🔄 إعادة الاختبار"):
+    st.session_state.recognized_words = []
+    st.session_state.is_hidden = False
+    st.rerun()
+
+# توجيه تعليمي بناءً على مخارج الحروف
+with st.expander("📍 تنبيهات مخارج الحروف (ص 19)"):
+    st.info("تأكد من إخراج العين من وسط الحلق في 'أعطيناك' والباء من الشفتين مع القلقلة في 'الأبتر'.")
