@@ -6,6 +6,7 @@ from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
 # --- 1. إعدادات الحالة والواجهة ---
+# التأكد من تعريف الحالات الضرورية عند بدء التشغيل
 if 'recognized_words' not in st.session_state:
     st.session_state.recognized_words = []
 if 'is_hidden' not in st.session_state:
@@ -47,40 +48,41 @@ def clean_text(text):
     t = t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     return t.strip()
 
-# --- 3. أزرار التحكم ---
+# --- 3. أزرار التحكم (مع تفعيل التحديث الفوري) ---
 st.title("🕌 تطبيق ترتيل ورش: تتبع وإخفاء")
 
 col1, col2 = st.columns(2)
 with col1:
     if st.button("👁️ إظهار السورة كاملة"):
         st.session_state.is_hidden = False
+        st.rerun() # إجبار التطبيق على إعادة التحميل لإظهار الكلمات
 with col2:
     if st.button("🙈 وضع الاختبار (إخفاء)"):
         st.session_state.is_hidden = True
+        st.rerun()
 
 # --- 4. عرض السورة التفاعلي ---
-def update_display():
-    html = "<div class='quran-container'>"
-    for item in surah_data:
-        # إذا كانت الكلمة قد نُطقت بشكل صحيح
-        if item['clean'] in st.session_state.recognized_words:
-            html += f"<span class='word-visible'>{item['text']}</span> "
-        # إذا كان وضع الإخفاء مفعلاً والكلمة لم تُنطق بعد
-        elif st.session_state.is_hidden:
-            html += f"<span class='word-test'>&nbsp;{item['text']}&nbsp;</span> "
-        # الوضع العادي (كلمات باهتة تنتظر النطق)
-        else:
-            html += f"<span class='word-hidden'>{item['text']}</span> "
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
+# تم تعديل المنطق هنا لضمان الأولوية لحالة الزر
+html = "<div class='quran-container'>"
+for item in surah_data:
+    # 1. إذا نُطقت الكلمة صحيحة تظهر دائماً بلون أخضر
+    if item['clean'] in st.session_state.recognized_words:
+        html += f"<span class='word-visible'>{item['text']}</span> "
+    # 2. إذا لم تُنطق وكان وضع الإخفاء (الاختبار) مفعلاً
+    elif st.session_state.is_hidden:
+        html += f"<span class='word-test'>&nbsp;{item['text']}&nbsp;</span> "
+    # 3. إذا كان وضع الإظهار مفعلاً (تظهر الكلمات بشكل باهت بانتظار نطقها)
+    else:
+        html += f"<span class='word-visible' style='opacity: 0.3;'>{item['text']}</span> "
+html += "</div>"
 
-update_display()
+st.markdown(html, unsafe_allow_html=True)
 
 st.divider()
 
 # --- 5. التسجيل ومعالجة الصوت ---
 st.subheader("🎤 ابدأ التلاوة ليظهر النص")
-audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="توقف لإظهار الكلمات", key='tarteel_live')
+audio = mic_recorder(start_prompt="بدء التسجيل", stop_prompt="توقف لإظهار الكلمات", key='tarteel_live_final')
 
 if audio:
     with st.spinner("⏳ جاري تحليل تلاوتك..."):
@@ -96,18 +98,11 @@ if audio:
                 audio_data = r.record(source)
                 text = r.recognize_google(audio_data, language="ar-SA")
                 
-                # تحليل الكلمات المنطوقة
                 new_words = [clean_text(w) for w in text.split()]
                 for nw in new_words:
                     if nw not in st.session_state.recognized_words:
                         st.session_state.recognized_words.append(nw)
                 
-                # نجاح المعالجة يفرض تحديث الواجهة
                 st.rerun()
 
-        except Exception as e:
-            st.error("لم نتمكن من تمييز الكلمات، يرجى المحاولة بصوت أوضح.")
-
-if st.button("🔄 إعادة الاختبار من جديد"):
-    st.session_state.recognized_words = []
-    st.rerun()
+        except
