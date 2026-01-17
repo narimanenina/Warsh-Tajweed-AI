@@ -1,60 +1,151 @@
 import streamlit as st
+import pandas as pd
+import speech_recognition as sr
+import io
+import re
+import time
 import librosa
 import librosa.display
-import matplotlib.pyplot as plt
 import numpy as np
-import io
+import matplotlib.pyplot as plt
+import random
+import datetime
 from streamlit_mic_recorder import mic_recorder
+from pydub import AudioSegment
+from fpdf import FPDF
 
-# --- 1. دالة مقارنة الموجات الصوتية (البصمة الصوتية) ---
-def compare_audio_waves(recorded_y, sr_rate):
-    """
-    مقارنة ترددات المستخدم مع موجة مرجعية (أو تحليل خصائصها)
-    """
-    # استخراج الـ Mel-spectrogram
-    S = librosa.feature.melspectrogram(y=recorded_y, sr=sr_rate, n_mels=128)
-    S_db = librosa.power_to_db(S, ref=np.max)
+# --- 1. إعدادات الواجهة والذاكرة ---
+st.set_page_config(page_title="مقرأة ورش الذكية", layout="wide", page_icon="🕌")
+
+if 'history' not in st.session_state: st.session_state.history = []
+if 'error_tracker' not in st.session_state: st.session_state.error_tracker = {}
+if 'high_scores' not in st.session_state: st.session_state.high_scores = {}
+if 'daily_seed' not in st.session_state: st.session_state.daily_seed = datetime.date.today().strftime("%Y%m%d")
+
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Amiri&display=swap');
+    html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: center; }
+    .quran-container {
+        background-color: #ffffff; padding: 35px; border-radius: 25px;
+        border: 2px solid #2E7D32; margin: 20px auto; max-width: 950px;
+        display: flex; flex-wrap: wrap; justify-content: center; gap: 15px;
+    }
+    .word-correct { color: #2E7D32; font-size: 38px; font-weight: bold; }
+    .word-error { color: #D32F2F; font-size: 38px; font-weight: bold; text-decoration: underline; }
+    .word-pending { color: #444444; font-size: 38px; }
+    .challenge-box { background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); padding: 20px; border-radius: 15px; border-right: 8px solid #2E7D32; margin-bottom: 25px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. البيانات والوظائف المساعدة ---
+surahs = {
+    "سورة الكوثر": "إِنَّا أَعْطَيْنَاكَ الْكَوْثَرَ فَصَلِّ لِرَبِّكَ وَانْحَرْ إِنَّ شَانِئَكَ هُوَ الْأَبْتَرُ",
+    "سورة الإخلاص": "قُلْ هُوَ اللَّهُ أَحَدٌ اللَّهُ الصَّمَدُ لَمْ يَلِدْ وَلَمْ يُولَدْ وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ",
+    "سورة الفاتحة": "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ اهْدينا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ"
+}
+
+@st.cache_data
+def load_phonetics():
+    try: return pd.read_csv('arabic_phonetics.csv')
+    except: return None
+
+def clean_text(text): return re.sub(r"[\u064B-\u0652]", "", text).strip()
+
+def generate_cert(user_name, surah, acc):
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
+    pdf.rect(10, 10, 277, 190)
+    pdf.set_font("Arial", 'B', 30)
+    pdf.cell(0, 50, "Certificate of Recitation Mastery", ln=True, align='C')
+    pdf.set_font("Arial", '', 20)
+    pdf.cell(0, 20, f"This certifies that {user_name}", ln=True, align='C')
+    pdf.cell(0, 20, f"Mastered {surah} with {acc}% Accuracy", ln=True, align='C')
+    pdf.cell(0, 30, f"Date: {datetime.date.today()}", ln=True, align='C')
+    return pdf.output(dest='S')
+
+# --- 3. تصميم واجهة التبويبات ---
+st.title("🕌 منصة ورش التعليمية الذكية")
+tab1, tab2, tab3 = st.tabs(["🎯 الاختبار والتحدي", "🔬 المختبر الترددي", "📈 الإحصائيات"])
+
+with tab1:
+    # تحدي اليوم
+    random.seed(st.session_state.daily_seed)
+    daily_s = random.choice(list(surahs.keys()))
+    st.markdown(f"<div class='challenge-box'><h3>🎯 تحدي اليوم: {daily_s}</h3></div>", unsafe_allow_html=True)
     
-    return S_db
+    selected_s = st.selectbox("اختر سورة للاختبار:", list(surahs.keys()))
+    target_v = surahs[selected_s]
+    target_w = target_v.split()
+    
+    placeholder = st.empty()
+    placeholder.markdown(f"<div class='quran-container'>{' '.join([f'<span class=word-pending>{w}</span>' for w in target_w])}</div>", unsafe_allow_html=True)
+    
+    audio = mic_recorder(start_prompt="🎤 ابدأ الترتيل", stop_prompt="⏹️ توقف للتحليل", key='main_recorder')
 
-# --- 2. واجهة المختبر الصوتي ---
-st.markdown("### 🔬 مختبر التحليل الترددي للمخارج")
-st.write("هذا الجزء يحلل 'بصمة صوتك' ويقارنها بخصائص الحرف الصوتية.")
+    if audio:
+        with st.spinner("⏳ جاري تحليل تلاوتك..."):
+            try:
+                # معالجة الصوت
+                raw_audio = AudioSegment.from_file(io.BytesIO(audio['bytes']))
+                duration = len(raw_audio) / 1000.0
+                r = sr.Recognizer()
+                with sr.AudioFile(io.BytesIO(audio['bytes'])) as source:
+                    spoken = r.recognize_google(r.record(source), language="ar-SA")
+                
+                spoken_w = [clean_text(w) for w in spoken.split()]
+                
+                # عرض ملون وحساب الدقة
+                res_html = "<div class='quran-container'>"
+                correct = 0
+                for w in target_w:
+                    if clean_text(w) in spoken_w:
+                        res_html += f"<span class='word-correct'>{w}</span> "
+                        correct += 1
+                    else:
+                        res_html += f"<span class='word-error'>{w}</span> "
+                res_html += "</div>"
+                placeholder.markdown(res_html, unsafe_allow_html=True)
+                
+                acc = (correct / len(target_w)) * 100
+                wpm = (correct / duration) * 60 if duration > 0 else 0
+                
+                # الإحصائيات
+                c1, c2, c3 = st.columns(3)
+                c1.metric("🎯 الدقة", f"{round(acc)}%")
+                c2.metric("⏱️ الزمن", f"{round(duration, 1)} ث")
+                c3.metric("🚀 الطلاقة", f"{round(wpm)} كلمة/د")
+                
+                # حفظ السجل
+                st.session_state.history.append({"سورة": selected_s, "دقة": acc, "سرعة": wpm})
+                
+                # الشهادة
+                if acc >= 90:
+                    st.success("🏆 إتقان مذهل!")
+                    u_name = st.text_input("اسمك للشهادة:", "هاني معمري")
+                    if st.button("📄 إصدار الشهادة"):
+                        pdf_data = generate_cert(u_name, selected_s, round(acc))
+                        st.download_button("تحميل الشهادة", pdf_data, f"Cert_{selected_s}.pdf", "application/pdf")
 
-# اختيار الحرف للاختبار الترددي
-char_to_test = st.selectbox("اختر حرفاً للتحليل الترددي:", ["ق", "ط", "د", "س"])
+            except: st.error("يرجى المحاولة بصوت أوضح.")
 
-# تسجيل الصوت للتحليل
-audio_data = mic_recorder(start_prompt=f"انطق حرف ({char_to_test}) بوضوح للتحليل", 
-                          stop_prompt="تحليل البصمة الصوتية", 
-                          key='spectro_mic')
-
-if audio_data:
-    try:
-        # قراءة البيانات الصوتية
-        audio_bytes = audio_data['bytes']
-        y, sr = librosa.load(io.BytesIO(audio_bytes), sr=22050)
-        
-        # استخراج البصمة
-        spectrogram = compare_audio_waves(y, sr)
-        
-        # إنشاء الرسم البياني
-        fig, ax = plt.subplots(figsize=(10, 4))
-        img = librosa.display.specshow(spectrogram, x_axis='time', y_axis='mel', sr=sr, ax=ax)
-        plt.colorbar(img, ax=ax, format='%+2.0f dB')
-        plt.title(f"البصمة الصوتية لنطق حرف ({char_to_test})")
-        
-        # عرض الرسم في Streamlit
+with tab2:
+    st.subheader("🔬 تحليل مخارج الحروف (بصمة الصوت)")
+    test_char = st.selectbox("اختر حرفاً للتحليل:", ["ق", "د", "س", "ر"])
+    q_audio = mic_recorder(start_prompt=f"انطق حرف ({test_char})", stop_prompt="تحليل", key='q_mic')
+    if q_audio:
+        y, sr_rate = librosa.load(io.BytesIO(q_audio['bytes']), sr=22050)
+        fig, ax = plt.subplots()
+        S = librosa.feature.melspectrogram(y=y, sr=sr_rate)
+        librosa.display.specshow(librosa.power_to_db(S, ref=np.max), ax=ax, y_axis='mel', x_axis='time')
         st.pyplot(fig)
+        st.info(f"يُظهر الرسم البياني توزيع الترددات لحرف {test_char}. ابحث عن مناطق التركيز الطاقي.")
         
-        # تحليل قوة النطق (نبرة الحرف)
-        power = np.mean(librosa.feature.rms(y=y))
-        st.write(f"📊 قوة دفع الهواء في الحرف: {round(power * 100, 2)} وحدة")
-        
-        if char_to_test in ["ق", "ط"] and power < 0.05:
-            st.warning("⚠️ تنبيه: نطقك للحرف ضعيف (يحتاج قوة استعلاء). حاول ضغط الهواء أكثر في المخرج.")
-        elif char_to_test == "س" and power > 0.1:
-            st.info("✅ نطق حاد وواضح (صفير سليم).")
 
-    except Exception as e:
-        st.error(f"خطأ في تحليل الموجة: {e}")
+with tab3:
+    st.subheader("📈 سجل الأداء")
+    if st.session_state.history:
+        df_hist = pd.DataFrame(st.session_state.history)
+        st.line_chart(df_hist['دقة'])
+        st.table(df_hist)
+    else: st.write("لا توجد بيانات.")
