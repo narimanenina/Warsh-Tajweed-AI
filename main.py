@@ -6,68 +6,100 @@ import re
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
-# --- 1. إعدادات الحالة ---
-if 'user_points' not in st.session_state: st.session_state.user_points = 0
+# --- 1. إعدادات الحالة والذاكرة ---
+if 'total_score' not in st.session_state: st.session_state.total_score = 0
 if 'stars' not in st.session_state: st.session_state.stars = 0
 if 'recognized_words' not in st.session_state: st.session_state.recognized_words = []
-if 'feedback_list' not in st.session_state: st.session_state.feedback_list = []
+if 'is_hidden' not in st.session_state: st.session_state.is_hidden = False
 
-st.set_page_config(page_title="مصحح أحكام ورش", layout="wide")
+st.set_page_config(page_title="مقرأة ورش - التقييم الذكي", layout="wide")
 
-# --- 2. تحميل ملف الأحكام (المرجع العلمي) ---
+# --- 2. تحميل البيانات والمخارج ---
 @st.cache_data
-def load_phonetics():
+def load_tajweed_rules():
     try:
+        # تأكد من وجود الملف arabic_phonetics.csv بجانب الكود
         return pd.read_csv('arabic_phonetics.csv', encoding='utf-8')
     except:
         return None
 
-df_rules = load_phonetics()
+df_rules = load_tajweed_rules()
 
-# --- 3. تصميم الواجهة ---
+# --- 3. التصميم الجمالي (CSS) ---
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@700&display=swap');
     html, body, [class*="st-"] { font-family: 'Amiri', serif; direction: rtl; text-align: center; }
-    .quran-frame {
-        background-color: #fffcf2; padding: 35px; border-radius: 25px;
-        border: 8px double #2E7D32; box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        margin: 20px auto; line-height: 2.8;
+    
+    .score-board {
+        background: linear-gradient(135deg, #1e5d2f 0%, #2e7d32 100%);
+        padding: 20px; border-radius: 20px; color: gold;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.2); margin-bottom: 25px;
     }
-    .word-correct { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; font-weight: bold; }
-    .word-faded { font-family: 'Amiri Quran', serif; font-size: 45px; color: #2E7D32; opacity: 0.15; }
-    .feedback-box { background-color: #fff3e0; padding: 15px; border-right: 5px solid #ff9800; border-radius: 10px; text-align: right; margin-top: 10px; }
+    .quran-frame {
+        background-color: #fffcf2; padding: 40px; border-radius: 25px;
+        border: 10px double #2e7d32; margin-bottom: 20px;
+    }
+    .word-correct { font-family: 'Amiri Quran', serif; font-size: 48px; color: #2e7d32; font-weight: bold; }
+    .word-pending { font-family: 'Amiri Quran', serif; font-size: 48px; color: #2e7d32; opacity: 0.15; }
+    .word-hidden { background-color: #d1d1d1; color: #d1d1d1; border-radius: 10px; font-size: 48px; margin: 0 5px; }
     </style>
     """, unsafe_allow_html=True)
 
-# بيانات سورة الكوثر
+# --- 4. بيانات السورة مع توزيع النقاط حسب الحكم ---
+# تم توزيع النقاط (Points) بناءً على صعوبة الحكم في رواية ورش
 surah_data = [
-    {"text": "إِنَّآ", "clean": "ان", "key_letter": "ن"},
-    {"text": "أَعْطَيْنَٰكَ", "clean": "اعطيناك", "key_letter": "ع"},
-    {"text": "اَ۬لْكَوْثَرَ", "clean": "الكوثر", "key_letter": "ث"},
-    {"text": "فَصَلِّ", "clean": "فصل", "key_letter": "ل"},
-    {"text": "لِرَبِّكَ", "clean": "لربك", "key_letter": "ر"},
-    {"text": "وَانْحَرْۖ", "clean": "وانحر", "key_letter": "ح"},
-    {"text": "إِنَّ", "clean": "ان", "key_letter": "ن"},
-    {"text": "شَانِئَكَ", "clean": "شانئك", "key_letter": "ش"},
-    {"text": "هُوَ", "clean": "هو", "key_letter": "ه"},
-    {"text": "اَ۬لَابْتَرُۖ", "clean": "الابتر", "key_letter": "ب"}
+    {"text": "إِنَّآ", "clean": "ان", "letter": "ن", "points": 30, "rule": "مد مشبع 6 حركات + غنة"},
+    {"text": "أَعْطَيْنَٰكَ", "clean": "اعطيناك", "letter": "ع", "points": 20, "rule": "تحقيق مخرج العين"},
+    {"text": "اَ۬لْكَوْثَرَ", "clean": "الكوثر", "letter": "ث", "points": 20, "rule": "مخرج الثاء وترقيق الراء"},
+    {"text": "فَصَلِّ", "clean": "فصل", "letter": "ل", "points": 25, "rule": "تغليظ اللام عند ورش"},
+    {"text": "لِرَبِّكَ", "clean": "لربك", "letter": "ر", "points": 15, "rule": "ترقيق الراء"},
+    {"text": "وَانْحَرْۖ", "clean": "وانحر", "letter": "ح", "points": 25, "rule": "إظهار النون عند الحاء"},
+    {"text": "إِنَّ", "clean": "ان", "letter": "ن", "points": 20, "rule": "غنة أكمل ما تكون"},
+    {"text": "شَانِئَكَ", "clean": "شانئك", "letter": "ش", "points": 15, "rule": "تفشي الشين"},
+    {"text": "هُوَ", "clean": "هو", "letter": "ه", "points": 10, "rule": "مخرج الهاء"},
+    {"text": "اَ۬لَابْتَرُۖ", "clean": "الابتر", "letter": "ب", "points": 40, "rule": "حكم النقل + قلقلة الباء"}
 ]
 
-st.title("🕌 مصحح أحكام التجويد (رواية ورش)")
+st.title("🕌 مقرأة ورش: التقييم والمكافآت")
 
-# عرض السورة
+# لوحة النتائج
+stars_display = "⭐" * st.session_state.stars
+st.markdown(f"""
+    <div class='score-board'>
+        <h2 style='color: white; margin:0;'>النتيجة الإجمالية: {st.session_state.total_score}</h2>
+        <div style='font-size: 30px;'>{stars_display}</div>
+        <p style='color: #e0e0e0; margin:0;'>أتقنت {len(st.session_state.recognized_words)} من أصل {len(surah_data)} كلمات</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+# أزرار التحكم
+c1, c2, c3 = st.columns(3)
+with c1:
+    if st.button("👁️ إظهار السورة"): st.session_state.is_hidden = False; st.rerun()
+with c2:
+    if st.button("🙈 وضع الاختبار"): st.session_state.is_hidden = True; st.rerun()
+with c3:
+    if st.button("🔄 إعادة التحدي"): 
+        st.session_state.recognized_words = []; st.session_state.total_score = 0; st.session_state.stars = 0; st.rerun()
+
+# عرض المصحف
 html = "<div class='quran-frame'>"
 for item in surah_data:
     if item['clean'] in st.session_state.recognized_words:
         html += f"<span class='word-correct'>{item['text']}</span> "
+    elif st.session_state.is_hidden:
+        html += f"<span class='word-hidden'>&nbsp;{item['text']}&nbsp;</span> "
     else:
-        html += f"<span class='word-faded'>{item['text']}</span> "
+        html += f"<span class='word-pending'>{item['text']}</span> "
 html += "</div>"
 st.markdown(html, unsafe_allow_html=True)
 
-# --- 4. محرك التصحيح والمقارنة مع CSV ---
-audio = mic_recorder(start_prompt="🎤 ابدأ التلاوة للتصحيح", stop_prompt="توقف للتحليل", key='tajweed_checker')
+st.divider()
+
+# --- 5. محرك التقييم الصارم ---
+st.subheader("🎤 رتّل الآن للحصول على التقييم")
+audio = mic_recorder(start_prompt="ابدأ التلاوة", stop_prompt="إنهاء للتقييم", key='eval_mic')
 
 if audio:
     with st.spinner("⏳ جاري تحليل الأحكام والمخارج..."):
@@ -83,40 +115,35 @@ if audio:
                 audio_data = r.record(source)
                 text = r.recognize_google(audio_data, language="ar-SA")
                 
-                clean_txt = re.sub(r"[\u064B-\u0652\u0670\u0653\u0654\u0655]", "", text).replace("أ", "ا").replace("إ", "ا")
-                spoken_words = clean_txt.split()
+                clean_text = re.sub(r"[\u064B-\u0652\u0670\u0653\u0654\u0655]", "", text).replace("أ", "ا").replace("إ", "ا")
+                spoken_words = clean_text.split()
                 
-                new_feedback = []
+                new_points = 0
                 for item in surah_data:
-                    if item['clean'] in spoken_words:
-                        if item['clean'] not in st.session_state.recognized_words:
-                            st.session_state.recognized_words.append(item['clean'])
-                    else:
-                        # إذا لم ينطق الكلمة صحيحة، نبحث عن الحكم في CSV
-                        if df_rules is not None:
-                            rule = df_rules[df_rules['letter'] == item['key_letter']]
-                            if not rule.empty:
-                                new_feedback.append(f"⚠️ خطأ في '{item['text']}': تأكد من مخرج {rule.iloc[0]['place']} ({rule.iloc[0]['description']})")
+                    if item['clean'] in spoken_words and item['clean'] not in st.session_state.recognized_words:
+                        # منح نقاط بناءً على الحكم التجويدي للكلمة
+                        st.session_state.recognized_words.append(item['clean'])
+                        st.session_state.total_score += item['points']
+                        new_points += item['points']
                 
-                st.session_state.feedback_list = new_feedback
+                if new_points > 0:
+                    # تحديث النجوم: نجمة لكل 50 نقطة
+                    st.session_state.stars = st.session_state.total_score // 50
+                    st.balloons()
+                    st.success(f"ممتاز! حصلت على {new_points} نقطة إضافية لتطبيقك أحكام ورش.")
+                else:
+                    st.error(f"لم يتم مطابقة كلمات جديدة. تأكد من مخارج الحروف. سمعتُ: {text}")
+                
                 st.rerun()
         except:
-            st.error("يرجى التحدث بوضوح أكبر لنتمكن من تصحيح الأحكام.")
+            st.warning("يرجى القراءة بوضوح أكبر وبصوت مسموع.")
 
-# --- 5. عرض التوجيهات البصرية ---
-if st.session_state.feedback_list:
-    st.subheader("📍 توجيهات تصحيح الأداء (بناءً على تلاوتك)")
-    for fb in st.session_state.feedback_list:
-        st.markdown(f"<div class='feedback-box'>{fb}</div>", unsafe_allow_html=True)
-        
-        # عرض صور المخارج بناءً على نوع الخطأ
-        if "الحلق" in fb:
-            st.write("استعن بصورة مخرج الحلق لتصحيح النطق:")
-            
-        elif "اللسان" in fb:
-            st.write("لاحظ وضعية اللسان الصحيحة:")
-            
-        elif "الشفتان" in fb:
-            st.write("تأكد من إطباق الشفتين كما في الصورة:")
-
-
+# --- 6. عرض نصيحة المخرج عند الخطأ (من CSV) ---
+if df_rules is not None:
+    with st.expander("📍 دليل تصحيح الأحكام (بناءً على تلاوتك)"):
+        for item in surah_data:
+            if item['clean'] not in st.session_state.recognized_words:
+                rule_info = df_rules[df_rules['letter'] == item['letter']]
+                if not rule_info.empty:
+                    st.write(f"**كلمة {item['text']}:** مطلوب {item['rule']}.")
+                    st.
