@@ -6,14 +6,14 @@ import re
 from streamlit_mic_recorder import mic_recorder
 from pydub import AudioSegment
 
-# --- إعدادات الحالة ---
+# --- 1. إعدادات الحالة ---
 if 'total_score' not in st.session_state: st.session_state.total_score = 0
 if 'recognized_words' not in st.session_state: st.session_state.recognized_words = []
 if 'is_hidden' not in st.session_state: st.session_state.is_hidden = False
 
-st.set_page_config(page_title="مقرأة ورش - المصحح الذكي", layout="wide")
+st.set_page_config(page_title="مقرأة ورش الذكية", layout="wide")
 
-# --- تحميل الأحكام من CSV ---
+# --- 2. تحميل الأحكام من CSV ---
 @st.cache_data
 def load_rules():
     try:
@@ -23,7 +23,7 @@ def load_rules():
 
 df_rules = load_rules()
 
-# --- التصميم ---
+# --- 3. التنسيق الجمالي ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap');
@@ -38,7 +38,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# بيانات السورة (تم ضبط كلمة فصل لتسهيل التعرف عليها)
+# بيانات السورة
 surah_data = [
     {"text": "إِنَّآ", "clean": "ان", "letter": "ن", "points": 30, "rule": "مد مشبع + غنة"},
     {"text": "أَعْطَيْنَٰكَ", "clean": "اعطيناك", "letter": "ع", "points": 20, "rule": "مخرج العين"},
@@ -52,14 +52,18 @@ surah_data = [
     {"text": "اَ۬لَابْتَرُۖ", "clean": "الابتر", "letter": "ب", "points": 40, "rule": "نقل + قلقلة"}
 ]
 
-st.title("🕌 مقرأة ورش: المصحح والمقيّم")
+st.title("🕌 مقرأة ورش: المصحح والمقيّم الذكي")
 
 # أزرار التحكم
 c1, c2 = st.columns(2)
 with c1:
-    if st.button("👁️ إظهار السورة (للمساعدة)"): st.session_state.is_hidden = False; st.rerun()
+    if st.button("👁️ إظهار السورة (للمساعدة)"): 
+        st.session_state.is_hidden = False
+        st.rerun()
 with c2:
-    if st.button("🙈 وضع الاختبار (تغطية الكلمات)"): st.session_state.is_hidden = True; st.rerun()
+    if st.button("🙈 وضع الاختبار (تغطية الكلمات)"): 
+        st.session_state.is_hidden = True
+        st.rerun()
 
 # عرض السورة
 html = "<div class='quran-frame'>"
@@ -69,7 +73,6 @@ for item in surah_data:
     elif st.session_state.is_hidden:
         html += f"<span class='word-hidden'>&nbsp;{item['text']}&nbsp;</span> "
     else:
-        # الكلمة تظهر "باهتة" وليست مغطاة في الوضع العادي
         html += f"<span class='word-faded'>{item['text']}</span> "
 html += "</div>"
 st.markdown(html, unsafe_allow_html=True)
@@ -77,7 +80,7 @@ st.markdown(html, unsafe_allow_html=True)
 st.divider()
 
 # تسجيل الصوت والتحليل
-audio = mic_recorder(start_prompt="🎤 سجل تلاوتك", stop_prompt="توقف للتحليل", key='fix_eval')
+audio = mic_recorder(start_prompt="🎤 سجل تلاوتك", stop_prompt="توقف للتحليل", key='fix_eval_v2')
 
 if audio:
     with st.spinner("⏳ جاري تحليل الأحكام..."):
@@ -102,18 +105,15 @@ if audio:
                             st.session_state.recognized_words.append(item['clean'])
                             st.session_state.total_score += item['points']
                 
-                st.success(f"تم التعرف على: {text}")
                 st.rerun()
         except:
             st.error("يرجى القراءة بوضوح.")
 
-# --- قسم تصحيح الأحكام (هنا تظهر النتيجة) ---
+# --- قسم تصحيح الأحكام (تم إصلاح الإزاحة هنا) ---
 if st.session_state.recognized_words and df_rules is not None:
-    st.subheader("📍 دليل تصحيح الأحكام (ص 19)")
-    # نأخذ آخر كلمة تم نطقها لتقديم النصيحة عنها
+    st.subheader("📍 دليل تصحيح الأحكام (بناءً على تلاوتك)")
     last_word_clean = st.session_state.recognized_words[-1]
     
-    # البحث عن معلومات الحكم للكلمة المنطوقة
     for item in surah_data:
         if item['clean'] == last_word_clean:
             rule_info = df_rules[df_rules['letter'] == item['letter']]
@@ -121,9 +121,11 @@ if st.session_state.recognized_words and df_rules is not None:
                 st.warning(f"💡 في كلمة '{item['text']}': مطلوب {item['rule']}")
                 st.info(f"توجيه المخرج: {rule_info.iloc[0]['description']}")
                 
-                # عرض الصور بناءً على المخرج لتعزيز الفهم
-                if "الحلق" in rule_info.iloc[0]['place']:
-                    
-                elif "اللسان" in rule_info.iloc[0]['place']:
-                    
-                elif "الشفتان" in rule_info.iloc[0]['place']:
+                # الصور التوضيحية
+                makhraj_place = rule_info.iloc[0]['place']
+                if "الحلق" in makhraj_place:
+                    st.write("صورة مخرج الحلق:")
+                elif "اللسان" in makhraj_place:
+                    st.write("صورة مخرج اللسان:")
+                elif "الشفتان" in makhraj_place:
+                    st.write("صورة مخرج الشفتين:")
