@@ -6,3 +6,5 @@ pandas
 pydub
 matplotlib>=3.8.0
 fpdf2
+streamlit-mic-recorder
+
